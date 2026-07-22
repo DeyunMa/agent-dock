@@ -1,0 +1,35 @@
+{
+  "name": "@mdy/codex-router",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A fail-open, local AI router for Codex Desktop and Codex CLI.",
+  "type": "module",
+  "bin": {
+    "codex-router": "bin/codex-router.js",
+    "codex": "bin/codex.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "build:macos": "swift build --package-path macos/CodexRouterBar",
+    "bundle:macos": "./scripts/build-macos-app.sh",
+    "run:macos": "swift run --package-path macos/CodexRouterBar CodexRouterBar",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test test/**/*.test.ts",
+    "check": "pnpm typecheck && pnpm test",
+    "control": "node dist/src/index.js control-server"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "smol-toml": "^1.4.2",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  },
+  "packageManager": "pnpm@10.33.0"
+}

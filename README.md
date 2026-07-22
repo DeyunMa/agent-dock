@@ -1,0 +1,130 @@
+# Codex Router
+
+一个供个人本机使用的 Codex 透明路由器。正常使用方式不变：
+
+- Desktop：照常点击 ChatGPT / Codex 图标。
+- CLI：照常输入 `codex`。
+- 每个 `turn/start`：自动选择 `model`、`effort` 和 `fast`。
+
+Router 不修改原始 prompt，不改变权限、sandbox 或工具配置；Ollama、规则或代理发生错误时原样直通 Codex。
+
+## 默认路由
+
+| Route | Model | Effort | Fast |
+| --- | --- | --- | --- |
+| `quick` | `gpt-5.6-luna` | `low` | `true` |
+| `balanced` | `gpt-5.6-terra` | `max` | `false` |
+| `deep` | `gpt-5.6-sol` | `high` | `false` |
+| `max` | `gpt-5.6-sol` | `xhigh` | `false` |
+
+`fast = true` 在 App Server 协议中写成 `serviceTier = "priority"`；`false` 写成 `null`，恢复默认速度层。
+
+配置文件是 `~/.codex/router/router.toml`。可以修改：
+
+- `[routing.category_routes]`：问题类型对应哪个 Route。
+- `[routes.*]`：Route 对应的模型、推理强度、是否 Fast。
+- `[routing.complexity_routes]`：复杂度是否自动升级。
+- `[routing.controls]`：手动升一档、最高档和恢复自动的完整消息触发词。
+- `[ollama]`：本地分类模型、超时、上下文和保活时间。
+
+运行中的 Router 会在每个新 `turn/start` 前比较配置文件版本；只有 TOML 或规则文件发生变化时才重新加载。因此 Router 开关、模型、推理强度和 Fast 修改会从下一次请求开始生效，不需要重启 Desktop。
+
+## 工作方式
+
+1. 使用版本化的加权规则集，提供确定性强证据和控制护栏。
+2. `Qwen3.5 2B Q4` 只判断模糊语义和复杂度，不负责授权，也不能覆盖 Router/Hook 控制类硬规则。
+3. 配置把语义类型和复杂度映射为 Route。
+4. 代理只改 App Server 的 `turn/start.params.model / effort / serviceTier`；如果有 `collaborationMode`，同步其 model/effort 设置。
+5. “继续、好的”之类短续话沿用同一 task 的上一次路由；明确“不要路由”则该轮原样直通。
+6. 整条消息为“加强一点 / 再加强一点 / 提高一档”时升一级；“最高强度 / 拉满”进入最高档；“恢复自动 / 自动路由”清除 task 的人工档位。
+
+详细设计见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+四档下一版策略见 [docs/ROUTING-STRATEGY.md](docs/ROUTING-STRATEGY.md)（仅提案，未改变当前行为）。
+回滚方式见 [docs/ROLLBACK.md](docs/ROLLBACK.md)。
+
+## 本机路径
+
+- 源码：`~/Code/codex-router`
+- 命令：`~/.local/bin/codex-router`、`~/.local/bin/codex`
+- 配置：`~/.codex/router/router.toml`
+- 审计日志：`~/.codex/router/events.jsonl`（当前文件最大 30MB，保留 1 份 `.1` 备份）
+- 迁移前 Hook 归档：`~/.codex/router/backups/user-prompt-router-20260721-pre-router/`
+
+审计日志是 Codex 会话 JSONL 的轻量路由索引：只保存 `thread_id`、prompt hash、路由结果、原因、分类器状态和延迟；不保存 prompt 明文、cwd、实际 model/effort 或工具记录。完整对话事实仍由 `~/.codex/sessions/` 保存。
+
+## 管理命令
+
+```bash
+codex-router doctor
+codex-router classify --json "先检查当前仓库，不要修改"
+codex-router control-server
+CODEX_ROUTER_BYPASS=1 codex
+```
+
+## macOS 菜单栏底座
+
+`macos/CodexRouterBar` 是同仓库内的原生 SwiftUI + AppKit 菜单栏控制面。它通过只绑定
+`127.0.0.1:47831` 的 Control API：
+
+- 即时启用或暂停自动路由；Router 进程保持透明直通，不做启停抖动。
+- 编辑每个档位的模型、推理强度和 Fast / priority tier；模型切换时按 OpenCodex catalog 自动收窄到受支持的 effort，并禁用不支持的 Fast。
+- 读取 OpenCodex 模型、provider 与能力清单，并在原生 Codex 与 OpenCodex Gateway 之间显式切换；Gateway 未接管时第三方模型会标记为“已配置，当前不可用”。
+- 通过“配置供应商…”调用 `ocx gui` 打开本机 OpenCodex Dashboard；供应商、账号、密钥和模型发现仍由 OpenCodex 管理。
+- 让 Control Module 校验并原子替换 TOML；Swift App 不直接解析或改写配置文件。
+
+```bash
+pnpm build
+pnpm build:macos
+pnpm run:macos
+
+# 生成无需完整 Xcode 的本地开发 App bundle
+pnpm bundle:macos
+
+# 日常只启动正式安装副本
+open "$HOME/Applications/Codex Router.app"
+```
+
+开发 bundle 放在 SwiftPM 的隐藏 `.build` 目录，仅用于安装或打包，不与正式副本同时启动。日常使用的唯一副本位于 `~/Applications/Codex Router.app`。
+
+菜单栏 App 会按需启动 `codex-router control-server`；子进程同时监测父 App，异常退出后也会自动回收。Router 与档位修改从下一次请求生效。Gateway 切换会修改 Codex 的连接配置，只影响新启动的 Codex 会话：启用时先让 OpenCodex 通过健康检查，再执行 `ocx restore back`；恢复原生时执行 `ocx restore`，OpenCodex 可继续在后台待命。
+
+“配置供应商…”与“启用 Gateway”是两个独立动作。由于上游 `ocx gui` 在代理未运行时会自动启动并注入 Gateway，Control Module 会记住点击前的 routed 状态；如果原来走原生，Dashboard 打开后会稳定执行 `ocx restore`，确保配置动作本身不改变数据路径。
+
+OpenCodex 的安装、版本、运行和 routed 状态由菜单栏实时检测，不在源码文档中固化本机快照。本地 bundle 使用 ad-hoc 签名；正式分发、自动更新和 notarization 不属于当前底座。
+
+显式传入 `codex -m ...`、`--oss`、`--local-provider` 或 `--remote` 时，CLI 尊重用户选择并绕过自动路由。
+
+## 开发验证
+
+```bash
+pnpm install
+pnpm check
+pnpm build
+./scripts/install-local.sh
+```
+
+测试覆盖语义分类合同、硬护栏、长对话续路由、prompt 不变、配置热加载、Control API 原子写入、Gateway Adapter、Desktop stdio 代理和 CLI WebSocket 代理。
+
+## 源码结构
+
+```text
+src/
+├── routing/    # 路由决策、规则、配置、分类器、审计和热加载
+├── transport/  # App Server 协议、stdio/WS 代理、Codex 参数与子进程
+├── control/    # 本地控制 API、配置写入、Gateway 接口与 OpenCodex 实现
+├── cli/        # doctor、CLI 分流与 control-server 命令
+└── index.ts    # 唯一 composition root
+
+macos/CodexRouterBar/Sources/CodexRouterBar/
+├── Models/
+├── Services/
+├── ViewModels/
+└── Views/Components/
+```
+
+## 已知边界
+
+- Desktop 使用 `CODEX_CLI_PATH` 选择代理 executable。这是当前 Desktop 本地实现支持的入口，但不是公开稳定配置；Desktop 升级后运行 `codex-router doctor` 和协议 smoke test。
+- 交互式 CLI 使用当前 Codex 官方 `--remote` 入口和一个仅绑定 `127.0.0.1` 的临时 WebSocket；每个 CLI 会话一个代理进程，不开放常驻端口。
+- `codex exec PROMPT` 可以在启动前路由；从 stdin 才读取 prompt 的 `codex exec -` 保持直通，避免代理吞掉管道输入。
+- Router 的规则、Ollama、配置重载和审计都保持 fail-open。OpenCodex 一旦被选为网络 Gateway，就是实际数据路径依赖；崩溃时无法在单个已启动会话内无损切回。当前缓解方式是启用前健康检查、明确状态提示，以及一键 `ocx restore` 恢复原生连接。

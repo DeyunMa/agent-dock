@@ -1,0 +1,269 @@
+{
+  "schema_version": 1,
+  "router_version": "1.2.0",
+  "minimum_score": 4.0,
+  "minimum_margin": 1.25,
+  "minimum_confidence": 0.72,
+  "category_thresholds": {
+    "RESEARCH_EXPLAIN": {"minimum_score": 3.0, "minimum_margin": 1.0, "minimum_confidence": 0.70},
+    "AUDIT_ANALYZE": {"minimum_score": 3.0, "minimum_margin": 1.0, "minimum_confidence": 0.70},
+    "PLAN_DESIGN": {"minimum_score": 3.0, "minimum_margin": 1.0, "minimum_confidence": 0.70}
+  },
+  "strong_evidence_override": {
+    "minimum_score": 6.0,
+    "minimum_margin": 0.5,
+    "minimum_confidence": 0.80,
+    "minimum_evidence_count": 2
+  },
+  "suppress_patterns": [
+    "(?:^|[，,。；;！!？?\\s])(?:不要|不用|关闭|跳过)(?:这个)?(?:工作流|路由|workflow|routing)(?:$|[，,。；;！!？?\\s])"
+  ],
+  "pass_patterns": [
+    "^(?:你好|嗨|谢谢|好的?|可以|行|没问题|收到|继续|继续吧|继续做|做吧|开始吧|yes|no|ok(?:ay)?|thanks?|continue|go ahead)[。！!？?\\s]*$",
+    "^(?:这个|那个|现在呢|然后呢|哪一个|哪种方案|这样吗|是吗)[。！!？?\\s]*$",
+    "^You are a memory extractor\\b",
+    "^# Instructions \\(read first\\)",
+    "^<codex_internal_context\\b",
+    "^<environment_context\\b"
+  ],
+  "modifiers": [
+    {
+      "id": "negated_operation",
+      "regex": "(?:(?:先|暂时|目前)?(?:不要|别|不需要|无需|不用)(?:再)?(?:安装|卸载|启动|重启|执行|运行|部署|发布|提交|push|删除|清理|导入|同步))|(?:只(?:搜索|查找|查看|研究|分析).{0,40}(?:不要|别|不需要|无需|不用|不)(?:安装|部署|执行|运行|提交|删除|修改))",
+      "adjust": {
+        "OPERATE_VERIFY": -8.0
+      }
+    },
+    {
+      "id": "read_only_now",
+      "regex": "(?:先不(?:做|改|实现|执行)|不要(?:做|改|实现|执行)|暂时不|只(?:分析|检查|讨论|判断|看)|先(?:分析|检查|讨论|判断|看下|确认)|给我(?:看下|判断)|我们讨论)",
+      "adjust": {
+        "AUDIT_ANALYZE": 2.5,
+        "PLAN_DESIGN": 1.5,
+        "IMPLEMENT_CHANGE": -3.0,
+        "DIAGNOSE_FIX": -2.0,
+        "OPERATE_VERIFY": -3.0
+      }
+    },
+    {
+      "id": "explicit_execution",
+      "regex": "(?:直接(?:做|改|执行|开始)|按照.{0,30}(?:做|执行|实现)|开始(?:做|实现|修改|执行)|帮我(?:做|改|修复|安装|执行)|请(?:实现|修复|安装|执行)|落地|完成并验证)",
+      "adjust": {
+        "IMPLEMENT_CHANGE": 2.0,
+        "DIAGNOSE_FIX": 1.5,
+        "OPERATE_VERIFY": 1.5,
+        "PLAN_DESIGN": -1.0,
+        "AUDIT_ANALYZE": -1.0
+      }
+    },
+    {
+      "id": "external_evidence",
+      "regex": "(?:互联网|网上|社区|开发者社区|开源项目|GitHub|官方文档|官网|最新|高星|star|搜索|浏览|查资料|外部资料)",
+      "adjust": {
+        "RESEARCH_EXPLAIN": 2.5
+      }
+    },
+    {
+      "id": "explicit_operation",
+      "regex": "(?:^(?:请|帮我|现在|直接)?\\s*(?:安装|卸载|启动|重启|部署|发布|提交|执行|运行)|然后(?:执行|运行|启动|部署|提交)|(?:请|帮我|给我).{0,20}(?:安装|卸载|启动|重启|部署|发布|提交|执行|运行))",
+      "adjust": {
+        "OPERATE_VERIFY": 3.0,
+        "AUDIT_ANALYZE": -1.0,
+        "PLAN_DESIGN": -1.0
+      }
+    },
+    {
+      "id": "local_evidence",
+      "regex": "(?:本机|本地|当前仓库|这个仓库|代码库|worktree|diff|日志|运行记录|配置文件|现有代码|当前状态)",
+      "adjust": {
+        "AUDIT_ANALYZE": 2.0,
+        "RESEARCH_EXPLAIN": -0.5
+      }
+    },
+    {
+      "id": "agent_surface_action",
+      "regex": "(?:(?:AGENTS\\.md|CLAUDE\\.md|SKILL\\.md|skill(?:-creator)?|系统提示词|system\\s*prompt|hook|memory|记忆|MCP|agent|智能体|自动化).{0,30}(?:改|优化|实现|同步|说明|约束|生成|增强|吸收|讨论|判断|调试|触发|加载|步骤|流程|作用域|关系)|(?:改|优化|实现|同步|创建|设计|调试|分析).{0,30}(?:AGENTS\\.md|SKILL\\.md|skill|系统提示词|hook|memory|记忆|MCP|agent|智能体))",
+      "adjust": {
+        "AGENT_WORKFLOW": 4.0,
+        "PLAN_DESIGN": -1.5,
+        "IMPLEMENT_CHANGE": -1.5,
+        "RESEARCH_EXPLAIN": -1.0,
+        "AUDIT_ANALYZE": -1.0,
+        "OPERATE_VERIFY": -2.0
+      }
+    },
+    {
+      "id": "question_not_authorization",
+      "regex": "(?:(?:是否|是不是|还是说|能否|可以).{0,45}(?:修改|升级|清理|删除|迁移|改成)|(?:修改|升级|清理|删除|迁移).{0,16}(?:吗|对吧)[？?]?$)",
+      "adjust": {
+        "AUDIT_ANALYZE": 2.0,
+        "PLAN_DESIGN": 1.0,
+        "IMPLEMENT_CHANGE": -3.0,
+        "OPERATE_VERIFY": -2.5
+      }
+    },
+    {
+      "id": "future_hypothesis",
+      "regex": "(?:如果|后续|将来|之后|预计|计划|准备).{0,100}(?:怎么|如何|是否|配置|部署|迁移|改造|选择|安排|接入|修改)",
+      "adjust": {
+        "PLAN_DESIGN": 3.5,
+        "OPERATE_VERIFY": -3.0,
+        "IMPLEMENT_CHANGE": -2.0
+      }
+    },
+    {
+      "id": "fault_diagnosis_combo",
+      "regex": "(?:报错|错误|失败|异常|打不开|卡住|崩溃|退出|掉线|掉了|配置不上|不工作|没生效|错误页|白屏|构建失败|流程错误|SIGTERM|exited\\s+(?:with\\s+)?code).{0,80}(?:修复|解决|恢复|处理|排查|定位|重试|跑通|为什么|原因|问题点|怎么回事)",
+      "adjust": {
+        "DIAGNOSE_FIX": 3.0,
+        "AUDIT_ANALYZE": -1.0,
+        "IMPLEMENT_CHANGE": -1.0,
+        "OPERATE_VERIFY": -1.0
+      }
+    },
+    {
+      "id": "artifact_delivery",
+      "regex": "(?:检查|分析|修改|结合|根据).{0,100}(?:并|然后|再|最后).{0,30}(?:生成|新建|给我|输出|产出).{0,20}(?:文档|文件|报告|图片|版本|Word|PDF|PPT|站点|页面)",
+      "adjust": {
+        "CREATE_ARTIFACT": 4.0,
+        "AUDIT_ANALYZE": -1.5,
+        "IMPLEMENT_CHANGE": -1.0,
+        "OPERATE_VERIFY": -2.0
+      }
+    },
+    {
+      "id": "explicit_implementation_tail",
+      "regex": "(?:那就|就按|按照|直接|现在|你).{0,20}(?:改|处理|清理|回退|去除|替换|加入|继续修改|实现).{0,16}(?:吧|一下|好|就行|即可)?[？?。\\s]*$",
+      "adjust": {
+        "IMPLEMENT_CHANGE": 3.0,
+        "AUDIT_ANALYZE": -1.5,
+        "PLAN_DESIGN": -1.0
+      }
+    },
+    {
+      "id": "deployment_question",
+      "regex": "(?:资源占用|算.{0,8}次|是否可以理解|为什么|需要改代码吗|怎么|如何).{0,100}(?:部署|Cloudflare|CF\\s*Pages|Vercel|Worker|Pages)",
+      "adjust": {
+        "RESEARCH_EXPLAIN": 4.0,
+        "OPERATE_VERIFY": -4.0
+      }
+    }
+  ],
+  "categories": [
+    {
+      "id": "AGENT_WORKFLOW",
+      "priority": 90,
+      "requires": [
+        ["(?:AGENTS\\.md|CLAUDE\\.md|SKILL\\.md|UserPromptSubmit|PreToolUse|PostToolUse|hook|hooks|skill|技能|子智能体|subagent|agent|智能体|MCP|自动化|automation|router|路由器)"],
+        ["(?:配置|安装|接入|修改|创建|编写|审计|检查|分析|调用|触发|加载|工作流|机制|路由|分类|设计|怎么做|如何做|优化|同步|说明|约束|生成|增强|讨论|判断|调试|作用域|项目级|全局级|用户级|步骤|流程|关系|错误|报错)" ]
+      ],
+      "patterns": [
+        {"regex": "(?:AGENTS\\.md|CLAUDE\\.md|SKILL\\.md|UserPromptSubmit|PreToolUse|PostToolUse)", "weight": 4.0},
+        {"regex": "(?:hook|hooks|skill|技能|子智能体|subagent|agent|智能体|MCP|automation|自动化|router|路由器)", "weight": 2.5},
+        {"regex": "(?:递归|加载顺序|触发|注入|additionalContext|调用机制|工作流|作用域|项目级|全局级|用户级|系统提示词|Prompt|提示词|记忆|memory)", "weight": 2.0},
+        {"regex": "(?im)^Automation:\\s|^Automation ID:|autonomous .{0,30} agent|execution loop", "weight": 8.0}
+      ],
+      "context": "这是 Agent 工作流/扩展机制任务。先核对当前 Codex 合同、本机配置和加载边界；注意递归、作用域与并发 Hook，保持改动可审计并做真实事件验证。"
+    },
+    {
+      "id": "DIAGNOSE_FIX",
+      "priority": 80,
+      "requires": [
+        ["(?:报错|错误|失败|异常|打不开|卡住|崩溃|退出|掉线|掉了|连接(?:失败|错误)|链接错误|配置不上|不工作|没生效|无效|不一致|错位|放错|不对齐|故障|问题|bug|404|500|SIGTERM|exited\\s+(?:with\\s+)?code|command\\s+not\\s+found|Expected\\s+comma)"],
+        ["(?:修复|解决|恢复|处理|排查|定位|改(?:一下|下|好)|让它正常|为什么|原因|问题点|怎么回事|哪里.{0,12}问题|分析一下|先分析|能判断|fix|重试|跑通)" ]
+      ],
+      "patterns": [
+        {"regex": "(?:报错|错误|失败|异常|打不开|卡住|崩溃|退出|掉线|掉了|配置不上|不工作|没生效|无效|不一致|错位|放错|不对齐|故障|bug|404|500|SIGTERM|exited\\s+(?:with\\s+)?code|command\\s+not\\s+found|Expected\\s+comma)", "weight": 3.5},
+        {"regex": "(?:修复|解决|恢复|处理|排查|定位|改好|让它正常|fix|重试|跑通)", "weight": 3.0},
+        {"regex": "(?:为什么|原因|问题点|怎么回事|哪里.{0,12}问题|分析一下|先分析|能判断)", "weight": 2.5},
+        {"regex": "(?:复现|根因|日志|堆栈|错误信息)", "weight": 1.5}
+      ],
+      "context": "这是故障诊断任务。先复现或取得直接证据，定位根因和影响面；若用户明确要求解决，再做最小修复并验证，否则只报告诊断结论，不扩大写入授权。"
+    },
+    {
+      "id": "OPERATE_VERIFY",
+      "priority": 70,
+      "requires": [
+        ["(?:安装|卸载|运行|执行|启动|重启|停止|部署|发布|提交|push|pull|merge|commit|checkout|cherry-pick|rebase|合并|切换分支|建分支|新建.{0,10}分支|登录(?:到|飞书|账号|系统|平台|网站)|授权|删除数据|清理数据|查询数据库|跑测试|调用接口|导入|导出|同步|复制|移动|暂存|git\\s+add|找到.{0,20}(?:会话|jsonl|文件)|配置到|更新.{0,20}环境变量)" ]
+      ],
+      "patterns": [
+        {"regex": "(?:安装|卸载|启动|重启|停止|部署|发布|登录(?:到|飞书|账号|系统|平台|网站)|授权)", "weight": 4.0},
+        {"regex": "(?:提交|push|pull|merge|commit|checkout|合并|切换分支|建分支|新建.{0,10}分支|cherry-pick|rebase|git\\s+add|暂存)", "weight": 4.5},
+        {"regex": "(?:运行|执行|重跑|跑).{0,15}(?:脚本|命令|测试|流程)|(?:调用接口|导入|导出|同步|复制|移动)", "weight": 4.0},
+        {"regex": "(?:删除|清理).{0,30}(?:文件|文件夹|目录|docs|scripts?|缓存|分支|数据)|(?:数据库|生产|线上|远程)", "weight": 3.0},
+        {"regex": "(?:用|使用|调用).{0,20}(?:MCP|Computer Use|脚本|接口).{0,35}(?:读|拿|获取|打印|测试|验证|看)", "weight": 4.0},
+        {"regex": "(?:找到|定位).{0,24}(?:会话|对话|jsonl|文件)|(?:配置到|更新一下).{0,30}(?:DBX|数据库|环境变量|本地配置)", "weight": 4.0}
+      ],
+      "context": "这是运行/系统操作任务。先解析精确目标和当前状态，涉及删除、凭据、生产或外部写入时遵守安全确认；执行后用真实状态或命令结果验证，并记录发生的副作用。"
+    },
+    {
+      "id": "CREATE_ARTIFACT",
+      "priority": 65,
+      "requires": [
+        ["(?:创建|生成|制作|撰写|编写|编辑|改写|产出|画|绘制|写一份|输出一份|给我做|帮我做|做一个|出一个|新建|重新出|重新生成|导出)"],
+        ["(?:文档|报告|笔记|文章|论文|申请书|思想汇报|Word|PPT|幻灯片|图片|插图|设计系统|模板|网页|站点|页面|HTML|图表|流程图|示意图|用例图|表格|CSV|DOCX|PDF|原型|海报|Prompt|提示词)" ]
+      ],
+      "patterns": [
+        {"regex": "(?:创建|生成|制作|撰写|编写|编辑|改写|产出|画|绘制|写一份|输出一份|给我做|做一个|出一个|新建|重新出|重新生成|导出)", "weight": 2.5},
+        {"regex": "(?:文档|报告|笔记|文章|论文|申请书|思想汇报|Word|PPT|幻灯片|图片|插图|设计系统|模板|网页|站点|页面|HTML|图表|流程图|示意图|用例图|表格|CSV|DOCX|PDF|原型|海报|Prompt|提示词)", "weight": 3.0},
+        {"regex": "(?:格式|排版|页码|目录|视觉|参考图|交付物)", "weight": 1.5}
+      ],
+      "context": "这是制品创作任务。确认输入、目标格式和验收物，使用匹配的文档/视觉/模板能力；保留可追溯源文件，生成后做结构、格式或视觉验证，并给出可访问的交付文件。"
+    },
+    {
+      "id": "IMPLEMENT_CHANGE",
+      "priority": 60,
+      "requires": [
+        ["(?:实现|修改|修复|新增|添加|删除|删掉|移除|去除|重构|更新|接入|开发|编写|迁移|初始化|改一下|改下|改成|改为|做一下|开始做|补上|替换|调整|处理(?:一下|好)?|优化|纠正|加入|加到|取出|换成|回退|还原|继续修改)" ]
+      ],
+      "patterns": [
+        {"regex": "(?:实现|修改|新增|添加|删除|删掉|移除|去除|重构|更新|接入|开发|编写|迁移|初始化|改一下|改下|改成|改为|做一下|补上|替换|调整|处理(?:一下|好)?|优化|纠正|加入|加到|取出|换成|回退|还原|继续修改)", "weight": 3.0},
+        {"regex": "(?:代码|文件|配置|页面|组件|接口|API|数据库|schema|字段|函数|测试|脚本|样式|布局|UI|前端|后端|图片|图像|页码|选项|文案|模板|目录|排版)", "weight": 1.5},
+        {"regex": "(?:验证|测试|typecheck|build|lint|回归)", "weight": 1.0}
+      ],
+      "context": "这是实现/修改任务。先检查相关现状和约束，做范围内的最小完整改动，保留无关用户改动；运行最窄且足够的验证。除非用户明确要求，不主动 commit、push、部署或扩大范围。"
+    },
+    {
+      "id": "PLAN_DESIGN",
+      "priority": 50,
+      "requires": [
+        ["(?:方案|规划|计划|设计|架构|流程|模型|分类|分几类|技术栈|怎么做|如何做|是否应该|是否合适|选择|取舍|建议|边界|命名|怎么处理|想怎么改|还有什么.{0,15}(?:要改|需要改)|还需要.{0,15}(?:改|调整)|改造计划|实施计划|迁移方案|技术选型|由谁处理|用什么AI|程序化处理)" ]
+      ],
+      "patterns": [
+        {"regex": "(?:给我方案|给个方案|规划|计划|设计|架构|流程|数据模型|技术栈|分类|分几类|取舍|边界|命名)", "weight": 3.0},
+        {"regex": "(?:是否应该|是否合适|你判断|你认为|怎么做|如何做|选择|建议|推荐)", "weight": 2.0},
+        {"regex": "(?:先讨论|先判断|先设计|先规划|先画|模拟图|示意图)", "weight": 2.5}
+        ,{"regex": "(?:改造计划|实施计划|迁移方案|技术选型|由谁处理|用什么AI|程序化处理|怎么处理|还有什么.{0,15}(?:要改|需要改)|还需要.{0,15}(?:改|调整))", "weight": 4.0}
+      ],
+      "context": "这是规划/设计决策任务。先给当前事实、目标边界、选项取舍和明确推荐；区分阻塞项与后续范围。用户未明确授权实现时，不修改代码、配置或外部状态。"
+    },
+    {
+      "id": "AUDIT_ANALYZE",
+      "priority": 40,
+      "requires": [
+        ["(?:检查|审计|分析|评估|判断|确认|核对|review|看下|查看|看看|查一下|查下|读取|读一下|现状|状态|进度|是否正确|是否合理|是否完成|为什么|怎么回事|什么问题|是哪一步|哪里出了问题|原因是什么|能判断|是什么逻辑|有没有|是否有|对吧|是这个意思吗|是否如此|是不是这样|现在是什么|目前是什么|还有吗|给我展示|优化点)" ]
+      ],
+      "patterns": [
+        {"regex": "(?:检查|审计|核对|review|评估|确认|判断|看下|查看|看看|查一下|查下|读取|读一下|怎么回事|什么问题|是哪一步|哪里出了问题|原因是什么|能判断|有没有|是否有)", "weight": 3.0},
+        {"regex": "(?:看下|检查|读取|读一下|查下).{0,100}(?:当前|代码|项目|执行|记录|来源|数量|字段|接口|残留|为什么)", "weight": 2.0},
+        {"regex": "(?:现状|当前|状态|进度|记录|日志|代码|仓库|本机|本地|diff|是否正确|是否合理|是否完成|为什么)", "weight": 1.5},
+        {"regex": "(?:先|只|暂时不|不要改|不做修改)", "weight": 1.0}
+      ],
+      "context": "这是审计/分析任务。先读取当前事实、代码、配置、日志或运行结果，给出证据支持的判断和影响面；没有明确修复授权时保持只读，不把建议自动落地。"
+    },
+    {
+      "id": "RESEARCH_EXPLAIN",
+      "priority": 30,
+      "requires": [
+        ["(?:是什么|解释|介绍|区别|对比|为什么|如何使用|怎么用|搜索|查找|调研|研究|开源|社区|官方文档|最新|推荐|有哪些|原理|代价|需要什么|能做什么|有什么用|是什么项目|属于什么|有限制吗|最新消息|预估一下|会变成多大|有没有.{0,20}推荐)" ]
+      ],
+      "patterns": [
+        {"regex": "(?:是什么|解释|介绍|原理|区别|对比|为什么|如何使用|怎么用)", "weight": 3.0},
+        {"regex": "(?:搜索|查找|调研|研究|开源|社区|官方文档|最新|高星|有哪些|推荐)", "weight": 3.0},
+        {"regex": "(?:代价|成本|消耗|需要什么|可行吗|能不能)", "weight": 1.5}
+        ,{"regex": "(?:能做什么|有什么用|是什么项目|属于什么|有限制吗|最新消息|预估一下|会变成多大|有没有.{0,20}推荐)", "weight": 4.0}
+      ],
+      "context": "这是研究/解释任务。先给直接结论，再解释原理、差异和适用边界；涉及当前版本、外部项目或推荐时查权威来源并附链接。默认只读，不修改本地或外部状态。"
+    }
+  ]
+}

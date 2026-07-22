@@ -7,11 +7,19 @@ function idKey(id: unknown): string | undefined {
 }
 
 export interface ProtocolRouterOptions extends RouteOptions {
-  onDecision?: (decision: RouteDecision) => void;
+  onDecision?: (observation: RoutedTurnObservation) => void | Promise<void>;
+}
+
+export interface RoutedTurnObservation {
+  decision: RouteDecision;
+  triggeredAt: string;
+  threadId?: string;
 }
 
 export class ProtocolRouter {
   private readonly modelListRequestIds = new Set<string>();
+  private readonly modelCatalogWaiters = new Set<() => void>();
+  private hasModelCatalog = false;
 
   constructor(
     private readonly engine: RoutingEngine,
@@ -36,12 +44,27 @@ export class ProtocolRouter {
     }
 
     try {
+      const triggeredAt = new Date().toISOString();
+      await this.waitForPendingModelCatalog();
       const transformed = structuredClone(message);
       const params = transformed.params as TurnStartParams;
       const decision = await this.engine.routeTurn(params, {
         manualModelOverride: this.options.manualModelOverride ?? false,
+        triggeredAt,
+        ...(this.options.surface ? { surface: this.options.surface } : {}),
       });
-      this.options.onDecision?.(decision);
+      try {
+        const observation: RoutedTurnObservation = {
+          decision,
+          triggeredAt,
+          ...(typeof params.threadId === "string" ? { threadId: params.threadId } : {}),
+        };
+        void Promise.resolve(this.options.onDecision?.(observation)).catch(() => {
+          // Presentation is observational and must never affect request forwarding.
+        });
+      } catch {
+        // Synchronous presentation failures are fail-open too.
+      }
       if (decision.action !== "apply" || !decision.profile) return line;
 
       params.model = decision.profile.model;
@@ -72,9 +95,28 @@ export class ProtocolRouter {
       const key = idKey(message.id);
       if (!key || !this.modelListRequestIds.delete(key)) return;
       const catalog = parseModelCatalog(message.result);
-      if (catalog) this.engine.setModelCatalog(catalog);
+      if (catalog) {
+        this.engine.setModelCatalog(catalog);
+        this.hasModelCatalog = true;
+      }
+      for (const resolve of this.modelCatalogWaiters) resolve();
+      this.modelCatalogWaiters.clear();
     } catch {
       // Server traffic is observational only and must remain byte-for-byte forwarded.
     }
+  }
+
+  private async waitForPendingModelCatalog(): Promise<void> {
+    if (this.hasModelCatalog || this.modelListRequestIds.size === 0) return;
+    await new Promise<void>((resolve) => {
+      const finish = () => {
+        clearTimeout(timer);
+        this.modelCatalogWaiters.delete(finish);
+        resolve();
+      };
+      const timer = setTimeout(finish, 200);
+      timer.unref();
+      this.modelCatalogWaiters.add(finish);
+    });
   }
 }

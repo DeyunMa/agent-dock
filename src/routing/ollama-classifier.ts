@@ -24,10 +24,17 @@ const ROUTE_CODES = {
   PASS: "PASS_CONTEXT",
 } as const;
 
+const INTENT_CODES = {
+  ASK: "ask",
+  DO: "do",
+  UNKNOWN: "unknown",
+} as const;
+
 const CLASSIFIER_GUIDE =
   "Route latest request. RESEARCH=解释研究; AUDIT=只读检查; DIAGNOSE=故障根因; " +
   "PLAN=方案讨论; IMPLEMENT=改代码配置; OPERATE=安装运行部署git; " +
   "ARTIFACT=文档图片网页; AGENT=Codex agent skill hook MCP router; PASS=继续寒暄. " +
+  "Intent ASK=只回答分析, DO=实际修改执行, UNKNOWN=不确定. " +
   "Complexity simple/normal/complex/extreme. JSON only. Request: ";
 
 function parseJsonContent(content: string): unknown {
@@ -127,9 +134,13 @@ export class OllamaClassifier {
                 type: "string",
                 enum: ["simple", "normal", "complex", "extreme"],
               },
+              intent: {
+                type: "string",
+                enum: ["ASK", "DO", "UNKNOWN"],
+              },
               confidence: { type: "number", minimum: 0, maximum: 1 },
             },
-            required: ["category", "complexity", "confidence"],
+            required: ["category", "complexity", "intent", "confidence"],
           },
           prompt: `${CLASSIFIER_GUIDE}${truncateForClassifier(prompt, this.config.maxPromptChars)}`,
           options: {
@@ -158,6 +169,10 @@ export class OllamaClassifier {
         typeof parsed?.category === "string"
           ? ROUTE_CODES[parsed.category as keyof typeof ROUTE_CODES]
           : undefined;
+      const mappedIntent =
+        typeof parsed?.intent === "string"
+          ? INTENT_CODES[parsed.intent as keyof typeof INTENT_CODES]
+          : undefined;
       if (
         !parsed ||
         !mappedCategory ||
@@ -171,6 +186,9 @@ export class OllamaClassifier {
       const decision: AiDecision = {
         category: mappedCategory,
         complexity: parsed.complexity,
+        // Keep category/complexity usable if an older local model omits the
+        // new observational field. Intent never changes the route in V2.0.
+        intent: mappedIntent ?? "unknown",
         confidence: Math.max(0, Math.min(1, parsed.confidence)),
         reason: "local_qwen_classifier",
         latencyMs,

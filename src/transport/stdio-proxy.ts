@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { StringDecoder } from "node:string_decoder";
 import type { RoutingEngine } from "../routing/engine.js";
+import { ClientLineDispatcher } from "./client-line-dispatcher.js";
 import { backendEnvironment, forwardSignals } from "./codex-process.js";
 import { ProtocolRouter, type ProtocolRouterOptions } from "./protocol-router.js";
 
@@ -35,13 +36,20 @@ export async function runStdioProxy(
 
   const inputTask = (async () => {
     const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
+    const dispatcher = new ClientLineDispatcher(
+      (line) => protocol.transformClientLine(line),
+      async (line) => {
+        if (!child.stdin?.writable) return;
+        if (!child.stdin.write(`${line}\n`)) {
+          await new Promise<void>((resolve) => child.stdin?.once("drain", resolve));
+        }
+      },
+    );
     for await (const line of lines) {
-      const transformed = await protocol.transformClientLine(line);
       if (!child.stdin?.writable) break;
-      if (!child.stdin.write(`${transformed}\n`)) {
-        await new Promise<void>((resolve) => child.stdin?.once("drain", resolve));
-      }
+      dispatcher.dispatch(line);
     }
+    await dispatcher.drain();
     child.stdin?.end();
   })().catch(() => {
     child.stdin?.end();

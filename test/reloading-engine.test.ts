@@ -20,10 +20,18 @@ rules_file = "${rulesPath}"
 [ollama]
 enabled = false
 
+[logging]
+audit_file = "/dev/null"
+
 [routes.quick]
 model = "gpt-5.6-luna"
 effort = "low"
 fast = true
+
+[routes.deep]
+model = "gpt-5.6-sol"
+effort = "high"
+fast = false
 `,
     { mode: 0o600 },
   );
@@ -54,4 +62,52 @@ fast = true
   const disabled = await engine.routeTurn({ ...params, threadId: "reload-disabled" });
   assert.equal(disabled.action, "inherit");
   assert.equal(disabled.reason, "router_disabled");
+});
+
+test("hot reload preserves sticky session state and resolves the updated profile", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "codex-router-reload-state-"));
+  const configPath = join(directory, "router.toml");
+  await writeFile(
+    configPath,
+    `version = 1
+enabled = true
+rules_file = "${rulesPath}"
+
+[ollama]
+enabled = false
+
+[logging]
+audit_file = "/dev/null"
+
+[routes.deep]
+model = "gpt-5.6-sol"
+effort = "high"
+fast = false
+`,
+    { mode: 0o600 },
+  );
+
+  const engine = await ReloadingRouterEngine.create(configPath);
+  const first = await engine.routeTurn({
+    threadId: "sticky-reload",
+    input: [{ type: "text", text: "页面持续报 500，定位根因并修复后跑回归测试" }],
+  });
+  assert.equal(first.routeName, "deep");
+
+  await setRouteProfile(
+    "deep",
+    { model: "provider/deep-v2", effort: "xhigh", fast: false },
+    configPath,
+  );
+  const continued = await engine.routeTurn({
+    threadId: "sticky-reload",
+    input: [{ type: "text", text: "继续" }],
+  });
+  assert.equal(continued.reason, "sticky_context");
+  assert.equal(continued.routeName, "deep");
+  assert.deepEqual(continued.profile, {
+    model: "provider/deep-v2",
+    effort: "xhigh",
+    fast: false,
+  });
 });

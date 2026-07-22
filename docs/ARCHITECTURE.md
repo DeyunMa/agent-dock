@@ -18,6 +18,9 @@ flowchart LR
   E --> R["版本化加权规则<br/>硬护栏"]
   E --> Q["Ollama Qwen3.5 2B<br/>语义与复杂度"]
   E --> M["TOML Route Mapping"]
+  D -. "surface=desktop" .-> V["Decision Feed"]
+  C -. "surface=terminal" .-> V
+  V --> HUD["菜单栏 App 原生 HUD"]
   P --> A["真实 Codex App Server"]
   A --> N["Native OpenAI"]
   A -. "显式启用" .-> G["OpenCodex Gateway<br/>第三方模型 Adapter"]
@@ -37,12 +40,22 @@ routeTurn(params: TurnStartParams): Promise<RouteDecision>
 
 它隐藏规则评分、Ollama 超时、复杂度合并、task sticky state、模型目录校验和审计。协议 Adapter 不理解业务分类，只消费 `RouteDecision`。
 
-`ReloadingRouterEngine` 是 Router Core 前的配置 Adapter。每个 turn 只做本地文件 metadata 比较；文件未变化时不解析 TOML、不访问 Gateway、不进行网络健康检查。文件变化时先完整解析和校验，再替换当前 `RouterEngine`；失败由 `ProtocolRouter` 原样直通。
+`RouteDecision.intent` 是独立的观测字段：`ask / do / continue / control / unknown`。它不会进入档位计算，也不会写入 prompt、additional context 或任何 agent-visible 字段；CLI、菜单栏和本地审计只展示 `[intent] [route]`。
+
+请求来源由 Transport Adapter 显式标记为 `desktop / terminal / management`，不通过进程列表猜测当前前台应用。终端和 Desktop Adapter 在收到本轮 `turn/start` 时先记录 `triggeredAt`，路由决策产生后立即异步写入目录型 `Decision Feed`；每个事件独立原子落盘，包含 cursor、surface、threadId、意图和档位，最多保留 200 条。菜单栏 App 用 `GET /v1/decisions?after=...` 增量轮询并显示原生 HUD，不等待 Codex 回答完成。
+
+Feed 按请求到达时间而不是分类完成时间排序：较早请求即使晚完成，也不能覆盖较新的会话。菜单栏状态需要标题时，Control Module 只拿事件中的精确 `threadId` 调 Codex `thread/read(includeTurns=false)`；标题、preview 和 cwd 不写入 Feed 或审计日志。Feed、元数据查询和 HUD 都是 fail-open 的观测能力，不进入 Router Core、Codex 协议或模型上下文。
+
+`ReloadingRouterEngine` 是 Router Core 前的配置 Adapter。每个 turn 只做本地文件 metadata 比较；文件未变化时不解析 TOML、不访问 Gateway、不进行网络健康检查。文件变化时先完整解析和校验，再替换当前 `RouterEngine`；task sticky state 由独立、有限容量的 `RouterSessionState` 持有，配置替换不会丢失续话状态，且续话会重新解析当前 Route profile。Ollama 配置未变化时复用已预热的分类器；失败由 `ProtocolRouter` 原样直通。
+
+Transport 使用逐 `threadId` 的顺序队列：同一 task 的消息保持顺序，不同 task 和全局 JSON-RPC 控制消息可绕过一个正在等待分类的慢请求。最终写入 App Server 仍经单一写队列串行化，避免字节交叉。
 
 菜单栏的 Control Module 是另一条独立 Interface：
 
 ```text
 GET  /v1/status
+GET  /v1/decision
+GET  /v1/decisions?after=:cursor&limit=:n
 PUT  /v1/router/enabled
 PUT  /v1/routes/:name
 PUT  /v1/gateway/routed
@@ -102,8 +115,8 @@ OpenCodex 被启用后位于 Codex 与上游 provider 之间，属于真正的�
 
 ## 审计日志
 
-`~/.codex/router/events.jsonl` 是全局 Router 的轻量决策索引，不是第二份会话记录。它通过 `thread_id + prompt_hash + timestamp` 与 Codex 的完整会话 JSONL 关联，只记录路由类别、Route、Fast、原因和耗时。
+`~/.codex/router/events.jsonl` 是全局 Router 的轻量决策索引，不是第二份会话记录。它通过 `thread_id + prompt_hash + triggered_at + timestamp` 与 Codex 的完整会话 JSONL 关联，只记录来源、意图、实际 Route、Fast、原因和耗时。
 
-Prompt 明文、cwd、实际 model/effort、回答和工具调用均只保留在 Codex 会话 JSONL。规则冲突或 fail-open 时，Router 额外记录候选类别、margin 和 AI 状态，便于定位超时或误分类。
+Prompt 明文、cwd、实际 model/effort、回答和工具调用仍由 Codex 会话记录管理；category 与 complexity 仅服务于当前 Router 内部计算。这些字段均不写入审计索引或模型上下文。分类器失败时只记录状态和延迟，便于定位超时；意图结果不参与授权或模型档位计算。
 
 日志单文件最大 30MB，超过后将当前文件滚动为 `events.jsonl.1`，只保留这一份历史备份。

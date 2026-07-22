@@ -2,8 +2,18 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { defaultConfig } from "../src/routing/config.js";
-import { RouterEngine, type AiClassifier } from "../src/routing/engine.js";
-import type { AiClassification, AiDecision, RoutingRuleSet } from "../src/routing/types.js";
+import {
+  RouterEngine,
+  type AiClassifier,
+  type RoutingEngine,
+} from "../src/routing/engine.js";
+import type {
+  AiClassification,
+  AiDecision,
+  ModelCatalog,
+  RouteDecision,
+  RoutingRuleSet,
+} from "../src/routing/types.js";
 import { ProtocolRouter } from "../src/transport/protocol-router.js";
 
 const rules = JSON.parse(
@@ -33,6 +43,7 @@ test("strong weighted rules beat a mistaken local-model category", async () => {
     new FakeAi({
       category: "RESEARCH_EXPLAIN",
       complexity: "extreme",
+      intent: "ask",
       confidence: 0.9,
       reason: "mistaken",
     }),
@@ -54,6 +65,7 @@ test("short continuation inherits the last route while explicit suppression does
     input: [{ type: "text", text: "页面报500错误，定位根因并修复后跑回归测试" }],
   });
   assert.equal(first.routeName, "deep");
+  assert.equal(first.intent, "do");
   const continued = await engine.routeTurn({
     threadId: "t2",
     input: [{ type: "text", text: "继续" }],
@@ -61,6 +73,7 @@ test("short continuation inherits the last route while explicit suppression does
   assert.equal(continued.action, "apply");
   assert.equal(continued.routeName, "deep");
   assert.equal(continued.sticky, true);
+  assert.equal(continued.intent, "continue");
 
   const suppressed = await engine.routeTurn({
     threadId: "t2",
@@ -83,6 +96,7 @@ test("manual controls step up one route, cap at max and restore automatic routin
   });
   assert.equal(balanced.routeName, "balanced");
   assert.equal(balanced.reason, "manual_step_up");
+  assert.equal(balanced.intent, "control");
 
   const deep = await engine.routeTurn({
     threadId: "manual-controls",
@@ -114,6 +128,40 @@ test("manual controls step up one route, cap at max and restore automatic routin
     input: [{ type: "text", text: "继续" }],
   });
   assert.equal(continued.action, "inherit");
+});
+
+test("intent is observational and does not change the selected route", async () => {
+  const prompt = {
+    threadId: "intent-observation",
+    input: [{ type: "text", text: "处理一下" }],
+  };
+  const ask = await new RouterEngine(
+    config(),
+    rules,
+    new FakeAi({
+      category: "RESEARCH_EXPLAIN",
+      complexity: "normal",
+      intent: "ask",
+      confidence: 0.9,
+      reason: "ask",
+    }),
+  ).routeTurn(prompt);
+  const action = await new RouterEngine(
+    config(),
+    rules,
+    new FakeAi({
+      category: "RESEARCH_EXPLAIN",
+      complexity: "normal",
+      intent: "do",
+      confidence: 0.9,
+      reason: "do",
+    }),
+  ).routeTurn(prompt);
+
+  assert.equal(ask.intent, "ask");
+  assert.equal(action.intent, "do");
+  assert.equal(ask.routeName, action.routeName);
+  assert.deepEqual(ask.profile, action.profile);
 });
 
 test("manual max and fallback controls work without a stored route", async () => {
@@ -153,6 +201,7 @@ test("manual control phrases only match the complete user message", async () => 
     new FakeAi({
       category: "PLAN_DESIGN",
       complexity: "normal",
+      intent: "ask",
       confidence: 0.9,
       reason: "plan",
     }),
@@ -202,6 +251,50 @@ test("protocol changes only routing fields and collaboration settings", async ()
     transformed.params.collaborationMode.settings.developer_instructions,
     "preserve me",
   );
+  assert.equal("intent" in transformed.params, false);
+  assert.equal("category" in transformed.params, false);
+  assert.equal("complexity" in transformed.params, false);
+  assert.equal("additionalContext" in transformed.params, false);
+  assert.equal("intent" in transformed.params.collaborationMode.settings, false);
+});
+
+test("presentation publishes with the current routing decision and remains fail-open", async () => {
+  const engine = new RouterEngine(config(), rules, new FakeAi());
+  let presentationCalls = 0;
+  const protocol = new ProtocolRouter(engine, {
+    onDecision: async () => {
+      presentationCalls += 1;
+      throw new Error("display unavailable");
+    },
+  });
+  const transformed = JSON.parse(
+    await protocol.transformClientLine(
+      JSON.stringify({
+        id: 8,
+        method: "turn/start",
+        params: {
+          threadId: "presentation-fail-open",
+          input: [{ type: "text", text: "安装这个CLI，然后执行初始化并确认版本" }],
+          model: "original-model",
+          effort: "low",
+        },
+      }),
+    ),
+  );
+  assert.equal(transformed.params.model, "gpt-5.6-terra");
+  assert.equal(transformed.params.effort, "max");
+  assert.equal(presentationCalls, 1, "the current decision should be presented immediately");
+  protocol.observeServerLine(
+    JSON.stringify({
+      method: "turn/completed",
+      params: {
+        threadId: "presentation-fail-open",
+        turn: { id: "turn-1", status: "completed", items: [] },
+      },
+    }),
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(presentationCalls, 1, "turn completion must not republish a stale decision");
 });
 
 test("non-turn protocol messages remain exact", async () => {
@@ -210,6 +303,72 @@ test("non-turn protocol messages remain exact", async () => {
   const line = '{"id":1,"method":"thread/list","params":{"limit":20}}';
   assert.equal(await protocol.transformClientLine(line), line);
   assert.equal(await protocol.transformClientLine("not-json"), "not-json");
+});
+
+test("a first turn waits briefly for an already requested model catalog", async () => {
+  let catalogReady = false;
+  let routedWithCatalog = false;
+  const fallbackDecision: RouteDecision = {
+    action: "inherit",
+    intent: "ask",
+    intentSource: "rule",
+    intentReason: "read_only_request",
+    category: "PASS_CONTEXT",
+    complexity: "simple",
+    reason: "test",
+    rule: {
+      category: "PASS_CONTEXT",
+      confidence: 0,
+      reason: "test",
+      scores: {},
+      suppressed: false,
+      passContext: true,
+    },
+    sticky: false,
+    promptHash: "hash",
+    promptChars: 1,
+    latencyMs: 0,
+  };
+  const engine: RoutingEngine = {
+    config: config(),
+    warmup() {},
+    setModelCatalog(_catalog: ModelCatalog) {
+      catalogReady = true;
+    },
+    async routeTurn() {
+      routedWithCatalog = catalogReady;
+      return fallbackDecision;
+    },
+  };
+  const protocol = new ProtocolRouter(engine);
+  await protocol.transformClientLine(
+    JSON.stringify({ id: 30, method: "model/list", params: {} }),
+  );
+  const turn = protocol.transformClientLine(
+    JSON.stringify({
+      id: 31,
+      method: "turn/start",
+      params: { threadId: "catalog-first-turn", input: [{ type: "text", text: "检查" }] },
+    }),
+  );
+  setTimeout(() => {
+    protocol.observeServerLine(
+      JSON.stringify({
+        id: 30,
+        result: {
+          data: [
+            {
+              id: "gpt-5.6-luna",
+              supportedReasoningEfforts: [{ reasoningEffort: "low" }],
+              serviceTiers: [{ id: "priority" }],
+            },
+          ],
+        },
+      }),
+    );
+  }, 10);
+  await turn;
+  assert.equal(routedWithCatalog, true);
 });
 
 test("manual CLI model override fails open", async () => {
@@ -230,6 +389,7 @@ test("an expected output token containing router does not force a deep route", a
     new FakeAi({
       category: "IMPLEMENT_CHANGE",
       complexity: "extreme",
+      intent: "do",
       confidence: 0.95,
       reason: "mistaken",
     }),

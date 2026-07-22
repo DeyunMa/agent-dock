@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { readLatestDecisionEvent } from "../src/presentation/decision-events.js";
+import { loadConfig } from "../src/routing/config.js";
 
 const root = new URL("..", import.meta.url).pathname;
 const fakeCodex = new URL("./fixtures/fake-codex.mjs", import.meta.url).pathname;
@@ -23,7 +26,7 @@ enabled = false
 cli_binary = "${fakeCodex}"
 desktop_binary = "${fakeCodex}"
 [logging]
-audit_file = ""
+audit_file = "${join(directory, "events.jsonl")}"
 `,
   );
   return path;
@@ -54,6 +57,21 @@ async function runNode(args: string[], config: string, input?: string): Promise<
   });
 }
 
+function firstJsonLine(stdout: string): unknown {
+  const [line] = stdout.trim().split("\n");
+  return JSON.parse(line ?? "");
+}
+
+async function waitForDecision(configPath: string) {
+  const config = await loadConfig(configPath);
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const event = await readLatestDecisionEvent(config);
+    if (event) return event;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error("decision event was not published");
+}
+
 test("Desktop stdio adapter transparently mutates a real JSONL stream", async () => {
   const config = await testConfig();
   const input = JSON.stringify({
@@ -61,7 +79,7 @@ test("Desktop stdio adapter transparently mutates a real JSONL stream", async ()
     method: "turn/start",
     params: {
       threadId: "desktop-test",
-      input: [{ type: "text", text: "设计并实现 Codex Router 透明代理" }],
+      input: [{ type: "text", text: "请实现 Codex Router 透明代理" }],
       model: "original",
       effort: "low",
       serviceTier: "priority",
@@ -72,21 +90,56 @@ test("Desktop stdio adapter transparently mutates a real JSONL stream", async ()
     config,
     `${input}\n`,
   );
-  const captured = JSON.parse(stdout.trim());
+  const captured = firstJsonLine(stdout) as {
+    result: { model: string; effort: string; serviceTier: string | null; input: unknown[] };
+  };
   assert.equal(captured.result.model, "gpt-5.6-sol");
   assert.equal(captured.result.effort, "high");
   assert.equal(captured.result.serviceTier, null);
-  assert.deepEqual(captured.result.input, [{ type: "text", text: "设计并实现 Codex Router 透明代理" }]);
+  assert.deepEqual(captured.result.input, [{ type: "text", text: "请实现 Codex Router 透明代理" }]);
+  const event = await waitForDecision(config);
+  assert.deepEqual(
+    { surface: event.surface, intent: event.intent, route: event.route },
+    { surface: "desktop", intent: "do", route: "deep" },
+  );
 });
 
 test("CLI adapter creates one local WebSocket proxy per interactive session", async () => {
   const config = await testConfig();
   const stdout = await runNode(["--import", "tsx", "src/index.ts", "cli"], config);
-  const captured = JSON.parse(stdout.trim());
+  const captured = firstJsonLine(stdout) as {
+    model: string;
+    effort: string;
+    serviceTier: string | null;
+    input: unknown[];
+  };
   assert.equal(captured.model, "gpt-5.6-luna");
   assert.equal(captured.effort, "low");
   assert.equal(captured.serviceTier, "priority");
   assert.deepEqual(captured.input, [{ type: "text", text: "请解释什么是幂等性" }]);
+  const event = await waitForDecision(config);
+  assert.deepEqual(
+    { surface: event.surface, intent: event.intent, route: event.route },
+    { surface: "terminal", intent: "ask", route: "quick" },
+  );
+});
+
+test("codex exec publishes its decision before the delegated command exits", async () => {
+  const config = await testConfig();
+  const child = spawn(
+    process.execPath,
+    ["--import", "tsx", "src/index.ts", "cli", "exec", "只回复结论"],
+    {
+      cwd: root,
+      env: { ...process.env, CODEX_ROUTER_CONFIG: config },
+      stdio: "ignore",
+    },
+  );
+  const event = await waitForDecision(config);
+  assert.equal(child.exitCode, null, "the delegated Codex command should still be running");
+  assert.equal(event.surface, "terminal");
+  assert.equal(event.threadId, undefined);
+  assert.equal((await once(child, "exit"))[0], 0);
 });
 
 test("malformed Router config fails open to the original App Server", async () => {
@@ -109,7 +162,9 @@ test("malformed Router config fails open to the original App Server", async () =
     config,
     `${input}\n`,
   );
-  const captured = JSON.parse(stdout.trim());
+  const captured = firstJsonLine(stdout) as {
+    result: { model: string; effort: string; input: unknown[] };
+  };
   assert.equal(captured.result.model, "original-model");
   assert.equal(captured.result.effort, "medium");
   assert.deepEqual(captured.result.input, [{ type: "text", text: "实现一个复杂功能" }]);

@@ -7,9 +7,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private let expandedPopoverSize = NSSize(width: 420, height: 700)
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let popover = NSPopover()
-    private let viewModel = RouterViewModel()
+    private let hudController = DecisionHUDController()
+    private lazy var viewModel = RouterViewModel { [weak self] decision in
+        self?.hudController.show(decision)
+    }
     private let controlServer = ControlServerProcess()
     private var refreshTimer: Timer?
+    private var decisionTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureStatusItem()
@@ -21,10 +25,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor in
+                self?.controlServer.ensureRunning()
                 self?.viewModel.refresh()
             }
         }
         refreshTimer?.tolerance = 1
+        decisionTimer = Timer.scheduledTimer(withTimeInterval: 0.75, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.viewModel.refreshDecisions()
+            }
+        }
+        decisionTimer?.tolerance = 0.1
 
         if ProcessInfo.processInfo.arguments.contains("--show") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
@@ -35,6 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         refreshTimer?.invalidate()
+        decisionTimer?.invalidate()
         controlServer.stop()
     }
 

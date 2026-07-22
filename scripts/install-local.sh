@@ -12,6 +12,14 @@ pnpm build
 
 mkdir -p "$router_home" "$local_bin"
 chmod 700 "$router_home"
+if [[ -f "$router_home/router-rules.json" ]] && \
+   ! cmp -s "$project_dir/resources/router-rules.json" "$router_home/router-rules.json"; then
+  rules_backup="$router_home/backups/rules-$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$rules_backup"
+  chmod 700 "$router_home/backups" "$rules_backup"
+  cp "$router_home/router-rules.json" "$rules_backup/router-rules.json"
+  chmod 600 "$rules_backup/router-rules.json"
+fi
 cp "$project_dir/resources/router-rules.json" "$router_home/router-rules.json"
 if [[ ! -f "$router_home/router.toml" ]]; then
   cp "$project_dir/resources/router.toml.example" "$router_home/router.toml"

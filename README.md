@@ -5,6 +5,8 @@
 - Desktop：照常点击 ChatGPT / Codex 图标。
 - CLI：照常输入 `codex`。
 - 每个 `turn/start`：自动选择 `model`、`effort` 和 `fast`。
+- 每次决策额外识别 `ask / do / continue / control / unknown`，只用于本地展示与审计，不参与档位选择，也不注入模型上下文。
+- 终端和 Desktop 请求在本轮路由决策产生后，由菜单栏 App 在屏幕顶部短暂显示 `[intent] [route]`；不等待 Codex 回答，也不向 Codex TUI 或 Codex Desktop 对话中插入消息。
 
 Router 不修改原始 prompt，不改变权限、sandbox 或工具配置；Ollama、规则或代理发生错误时原样直通 Codex。
 
@@ -48,9 +50,10 @@ Router 不修改原始 prompt，不改变权限、sandbox 或工具配置；Olla
 - 命令：`~/.local/bin/codex-router`、`~/.local/bin/codex`
 - 配置：`~/.codex/router/router.toml`
 - 审计日志：`~/.codex/router/events.jsonl`（当前文件最大 30MB，保留 1 份 `.1` 备份）
+- 展示事件流：`~/.codex/router/decision-feed/`（每次触发一个原子事件，最多保留 200 条；按请求到达时间排序）
 - 迁移前 Hook 归档：`~/.codex/router/backups/user-prompt-router-20260721-pre-router/`
 
-审计日志是 Codex 会话 JSONL 的轻量路由索引：只保存 `thread_id`、prompt hash、路由结果、原因、分类器状态和延迟；不保存 prompt 明文、cwd、实际 model/effort 或工具记录。完整对话事实仍由 `~/.codex/sessions/` 保存。
+审计日志是 Codex 会话 JSONL 的轻量路由索引：只保存 `thread_id`、prompt hash、意图、实际档位、原因、分类器状态和延迟；不保存 prompt 明文、category、complexity、cwd、实际 model/effort 或工具记录。完整对话事实仍由 `~/.codex/sessions/` 保存。
 
 ## 管理命令
 
@@ -71,6 +74,7 @@ CODEX_ROUTER_BYPASS=1 codex
 - 读取 OpenCodex 模型、provider 与能力清单，并在原生 Codex 与 OpenCodex Gateway 之间显式切换；Gateway 未接管时第三方模型会标记为“已配置，当前不可用”。
 - 通过“配置供应商…”调用 `ocx gui` 打开本机 OpenCodex Dashboard；供应商、账号、密钥和模型发现仍由 OpenCodex 管理。
 - 让 Control Module 校验并原子替换 TOML；Swift App 不直接解析或改写配置文件。
+- 显示最近一次实际触发的 Codex 会话标题、Desktop/Terminal 来源和本地时间；会话信息按事件里的精确 `threadId` 从 Codex App Server 只读查询，不复制 prompt 或会话正文。
 
 ```bash
 pnpm build
@@ -103,7 +107,7 @@ pnpm build
 ./scripts/install-local.sh
 ```
 
-测试覆盖语义分类合同、硬护栏、长对话续路由、prompt 不变、配置热加载、Control API 原子写入、Gateway Adapter、Desktop stdio 代理和 CLI WebSocket 代理。
+测试覆盖语义分类合同、硬护栏、长对话续路由、prompt 不变、配置热加载与 sticky state、乱序展示事件、逐会话并发转发、Control API 原子写入、会话元数据、Gateway Adapter、Desktop stdio 代理和 CLI WebSocket 代理。
 
 ## 源码结构
 

@@ -1,15 +1,29 @@
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import {
+  readDecisionEvents,
+  readLatestDecisionEvent,
+  type DecisionEvent,
+  type DecisionFeedReadOptions,
+} from "../presentation/decision-events.js";
+import {
+  readLatestAuditDecision,
+  type LatestAuditDecision,
+} from "../routing/audit.js";
+import {
   DEFAULT_CONFIG_PATH,
   expandHome,
   loadConfig,
   routeProfileValidationError,
 } from "../routing/config.js";
 import type { RouteProfile, RouterConfig } from "../routing/types.js";
+import type {
+  CodexThreadCatalog,
+  CodexThreadSummary,
+} from "./codex-thread-catalog.js";
 import type { GatewayAdapter, GatewaySnapshot } from "./gateway.js";
 
-export const CONTROL_SCHEMA_VERSION = 3;
+export const CONTROL_SCHEMA_VERSION = 6;
 
 export class ControlInputError extends Error {}
 
@@ -58,7 +72,19 @@ export interface ControlStatus {
     requiresCodexRestart: boolean;
     message: string;
   };
+  latestDecision?: LatestDecision;
   gateway: GatewaySnapshot;
+}
+
+export interface LatestDecision {
+  id?: string;
+  timestamp: string;
+  triggeredAt: string;
+  surface?: DecisionEvent["surface"];
+  threadId?: string;
+  intent: LatestAuditDecision["intent"];
+  route: string;
+  session?: CodexThreadSummary;
 }
 
 function statusFromConfig(
@@ -67,6 +93,7 @@ function statusFromConfig(
   endpoint: string,
   version: string,
   gateway: GatewaySnapshot,
+  latestDecision: LatestDecision | undefined,
 ): ControlStatus {
   return {
     schemaVersion: CONTROL_SCHEMA_VERSION,
@@ -96,6 +123,7 @@ function statusFromConfig(
         ? "自动路由已启用；档位修改会从下一次请求开始生效。"
         : "自动路由已暂停；下一次请求开始原样直通 Codex。",
     },
+    ...(latestDecision ? { latestDecision } : {}),
     gateway,
   };
 }
@@ -105,11 +133,101 @@ export async function readControlStatus(options: {
   endpoint: string;
   version: string;
   gateway: GatewayAdapter;
+  threadCatalog?: CodexThreadCatalog;
 }): Promise<ControlStatus> {
   const configPath = expandHome(options.configPath ?? process.env.CODEX_ROUTER_CONFIG ?? DEFAULT_CONFIG_PATH);
   const config = await loadConfig(configPath);
-  const gateway = await options.gateway.snapshot(config.gateway);
-  return statusFromConfig(config, configPath, options.endpoint, options.version, gateway);
+  const [gateway, latestDecision] = await Promise.all([
+    options.gateway.snapshot(config.gateway),
+    readLatestDecision(config, options.threadCatalog),
+  ]);
+  return statusFromConfig(
+    config,
+    configPath,
+    options.endpoint,
+    options.version,
+    gateway,
+    latestDecision,
+  );
+}
+
+function eventDecision(event: DecisionEvent): LatestDecision {
+  return {
+    id: event.id,
+    timestamp: event.timestamp,
+    triggeredAt: event.triggeredAt,
+    surface: event.surface,
+    ...(event.threadId ? { threadId: event.threadId } : {}),
+    intent: event.intent,
+    route: event.route,
+  };
+}
+
+function auditDecision(event: LatestAuditDecision): LatestDecision {
+  return {
+    timestamp: event.timestamp,
+    triggeredAt: event.triggeredAt,
+    ...(event.surface ? { surface: event.surface } : {}),
+    ...(event.threadId ? { threadId: event.threadId } : {}),
+    intent: event.intent,
+    route: event.route,
+  };
+}
+
+function newerDecision(
+  audit: LatestAuditDecision | undefined,
+  event: DecisionEvent | undefined,
+): LatestDecision | undefined {
+  const visibleAudit =
+    audit?.surface === "desktop" || audit?.surface === "terminal" ? audit : undefined;
+  if (!visibleAudit) return event ? eventDecision(event) : undefined;
+  if (!event) return auditDecision(visibleAudit);
+  const auditTime = Date.parse(visibleAudit.triggeredAt);
+  const eventTime = Date.parse(event.triggeredAt);
+  // The feed event wins ties because it carries the exact display surface and
+  // event cursor. A late completion from an older trigger can never win.
+  return eventTime >= auditTime ? eventDecision(event) : auditDecision(visibleAudit);
+}
+
+async function enrichDecision(
+  config: RouterConfig,
+  decision: LatestDecision | undefined,
+  threadCatalog: CodexThreadCatalog | undefined,
+): Promise<LatestDecision | undefined> {
+  if (!decision?.threadId || !threadCatalog) return decision;
+  const executable =
+    decision.surface === "terminal"
+      ? config.codex.cliBinary
+      : config.codex.desktopBinary;
+  const session = await threadCatalog.read(decision.threadId, executable);
+  return session ? { ...decision, session } : decision;
+}
+
+async function readLatestDecision(
+  config: RouterConfig,
+  threadCatalog?: CodexThreadCatalog,
+): Promise<LatestDecision | undefined> {
+  const [event, audit] = await Promise.all([
+    readLatestDecisionEvent(config),
+    readLatestAuditDecision(config.logging.auditFile),
+  ]);
+  return enrichDecision(config, newerDecision(audit, event), threadCatalog);
+}
+
+export async function readControlDecision(
+  configPath = process.env.CODEX_ROUTER_CONFIG ?? DEFAULT_CONFIG_PATH,
+): Promise<LatestDecision | undefined> {
+  const config = await loadConfig(expandHome(configPath));
+  const event = await readLatestDecisionEvent(config);
+  return event ? eventDecision(event) : undefined;
+}
+
+export async function readControlDecisions(
+  configPath = process.env.CODEX_ROUTER_CONFIG ?? DEFAULT_CONFIG_PATH,
+  options: DecisionFeedReadOptions = {},
+): Promise<LatestDecision[]> {
+  const config = await loadConfig(expandHome(configPath));
+  return (await readDecisionEvents(config, options)).map(eventDecision);
 }
 
 async function readSource(configPath: string): Promise<string> {

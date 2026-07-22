@@ -6,7 +6,56 @@ struct ControlStatus: Decodable {
     let router: RouterStatus
     let routes: [RouteSummary]
     let activation: ActivationStatus
+    let latestDecision: LatestDecision?
     let gateway: GatewayStatus
+}
+
+struct LatestDecision: Decodable, Equatable {
+    let id: String?
+    let timestamp: String
+    let triggeredAt: String?
+    let surface: String?
+    let threadId: String?
+    let intent: String
+    let route: String
+    let session: CodexThreadSummary?
+
+    var displayTitle: String {
+        if let name = session?.name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+            return name
+        }
+        if let preview = session?.preview?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !preview.isEmpty {
+            return preview
+        }
+        if let threadId, !threadId.isEmpty {
+            return "会话 \(threadId.prefix(8))"
+        }
+        return "Codex Exec"
+    }
+
+    var eventTimestamp: String { triggeredAt ?? timestamp }
+}
+
+struct DecisionFeedStatus: Decodable {
+    let schemaVersion: Int
+    let decisions: [LatestDecision]
+}
+
+struct CodexThreadSummary: Decodable, Equatable {
+    let id: String
+    let name: String?
+    let preview: String?
+    let cwd: String?
+    let source: String?
+    let createdAt: Int?
+    let updatedAt: Int?
+    let recencyAt: Int?
+
+    var projectName: String? {
+        guard let cwd, !cwd.isEmpty else { return nil }
+        return URL(fileURLWithPath: cwd).lastPathComponent
+    }
 }
 
 struct ControlServiceStatus: Decodable {

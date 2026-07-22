@@ -1,4 +1,5 @@
 import { appendAudit, promptHash } from "./audit.js";
+import { resolveExecutionIntent, type IntentDecision } from "./intent.js";
 import { validateProfile } from "./model-catalog.js";
 import { OllamaClassifier } from "./ollama-classifier.js";
 import { deterministicComplexity, extractTurnPrompt } from "./prompt.js";
@@ -8,7 +9,6 @@ import type {
   AiClassification,
   ModelCatalog,
   RouteDecision,
-  RouteProfile,
   RouterConfig,
   RoutingRuleSet,
   SemanticCategory,
@@ -26,11 +26,12 @@ interface StoredRoute {
   category: SemanticCategory;
   complexity: RouteDecision["complexity"];
   routeName: string;
-  profile: RouteProfile;
 }
 
 export interface RouteOptions {
   manualModelOverride?: boolean;
+  triggeredAt?: string;
+  surface?: "desktop" | "terminal" | "management";
 }
 
 export interface AiClassifier {
@@ -39,6 +40,38 @@ export interface AiClassifier {
 }
 
 type RoutingControl = "step_up" | "max" | "auto";
+
+const MAX_STORED_THREAD_ROUTES = 256;
+
+/**
+ * Session continuity is owned independently from a particular config/rules
+ * snapshot, so a hot reload cannot silently forget the current thread route.
+ */
+export class RouterSessionState {
+  private readonly routes = new Map<string, StoredRoute>();
+
+  get(key: string): StoredRoute | undefined {
+    const value = this.routes.get(key);
+    if (!value) return undefined;
+    this.routes.delete(key);
+    this.routes.set(key, value);
+    return value;
+  }
+
+  set(key: string, value: StoredRoute): void {
+    this.routes.delete(key);
+    this.routes.set(key, value);
+    while (this.routes.size > MAX_STORED_THREAD_ROUTES) {
+      const oldest = this.routes.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.routes.delete(oldest);
+    }
+  }
+
+  delete(key: string): void {
+    this.routes.delete(key);
+  }
+}
 
 function normalizeControlText(value: string): string {
   return value
@@ -49,13 +82,13 @@ function normalizeControlText(value: string): string {
 }
 
 export class RouterEngine implements RoutingEngine {
-  private readonly threadRoutes = new Map<string, StoredRoute>();
   private catalog?: ModelCatalog;
 
   constructor(
     readonly config: RouterConfig,
     private readonly rules: RoutingRuleSet,
     private readonly ai: AiClassifier = new OllamaClassifier(config.ollama),
+    private readonly sessionState = new RouterSessionState(),
   ) {}
 
   warmup(): void {
@@ -70,18 +103,32 @@ export class RouterEngine implements RoutingEngine {
     params: TurnStartParams,
     prompt: string,
     rule: ReturnType<typeof classifyWithRules>,
+    intent: IntentDecision,
     started: number,
   ): RouteDecision | undefined {
     if (!this.config.routing.stickyTurns || rule.suppressed) return undefined;
     const key = params.threadId ?? "__default__";
-    const stored = this.threadRoutes.get(key);
+    const stored = this.sessionState.get(key);
     if (!stored) return undefined;
+    const configuredProfile = this.config.routes[stored.routeName];
+    if (!configuredProfile) {
+      this.sessionState.delete(key);
+      return undefined;
+    }
+    const validation = validateProfile(configuredProfile, this.catalog);
+    if (!validation.valid) {
+      this.sessionState.delete(key);
+      return undefined;
+    }
     return {
       action: "apply",
+      intent: intent.intent,
+      intentSource: intent.source,
+      intentReason: intent.reason,
       category: stored.category,
       complexity: stored.complexity,
       routeName: stored.routeName,
-      profile: { ...stored.profile },
+      profile: { ...validation.profile },
       reason: "sticky_context",
       rule,
       sticky: true,
@@ -151,9 +198,14 @@ export class RouterEngine implements RoutingEngine {
     params: TurnStartParams,
     prompt: string,
     decision: RouteDecision,
+    triggeredAt?: string,
+    surface?: RouteOptions["surface"],
   ): Promise<RouteDecision> {
     try {
-      await appendAudit(this.config, params, decision);
+      await appendAudit(this.config, params, decision, {
+        ...(triggeredAt ? { triggeredAt } : {}),
+        ...(surface ? { surface } : {}),
+      });
     } catch {
       // Auditing must never break routing or the Codex protocol.
     }
@@ -164,15 +216,23 @@ export class RouterEngine implements RoutingEngine {
     const started = performance.now();
     const prompt = extractTurnPrompt(params);
     const rule = classifyWithRules(prompt, this.rules);
+    const key = params.threadId ?? "__default__";
+    const control = this.routingControl(prompt);
+    const initialIntent = resolveExecutionIntent(prompt, { control: control !== undefined });
     const base = {
       rule,
+      intent: initialIntent.intent,
+      intentSource: initialIntent.source,
+      intentReason: initialIntent.reason,
       sticky: false,
       promptHash: promptHash(prompt),
       promptChars: prompt.length,
     };
+    const finish = (decision: RouteDecision) =>
+      this.audit(params, prompt, decision, options.triggeredAt, options.surface);
 
     if (!this.config.enabled || options.manualModelOverride) {
-      return this.audit(params, prompt, {
+      return finish({
         action: "inherit",
         category: rule.category,
         complexity: deterministicComplexity(prompt),
@@ -182,11 +242,9 @@ export class RouterEngine implements RoutingEngine {
       });
     }
 
-    const key = params.threadId ?? "__default__";
-    const control = this.routingControl(prompt);
     if (control === "auto") {
-      this.threadRoutes.delete(key);
-      return this.audit(params, prompt, {
+      this.sessionState.delete(key);
+      return finish({
         action: "inherit",
         category: "PASS_CONTEXT",
         complexity: deterministicComplexity(prompt),
@@ -197,7 +255,7 @@ export class RouterEngine implements RoutingEngine {
     }
 
     if (control === "step_up" || control === "max") {
-      const stored = this.threadRoutes.get(key);
+      const stored = this.sessionState.get(key);
       const routeOrder = this.config.routing.routeOrder;
       const baselineRoute = stored?.routeName ?? this.routeFromTurnParams(params);
       const baselineIndex = baselineRoute ? routeOrder.indexOf(baselineRoute) : -1;
@@ -209,7 +267,7 @@ export class RouterEngine implements RoutingEngine {
             : this.config.routing.controls.fallbackRoute;
       const configuredProfile = routeName ? this.config.routes[routeName] : undefined;
       if (!routeName || !configuredProfile) {
-        return this.audit(params, prompt, {
+        return finish({
           action: "inherit",
           category: stored?.category ?? "PASS_CONTEXT",
           complexity: stored?.complexity ?? deterministicComplexity(prompt),
@@ -220,7 +278,7 @@ export class RouterEngine implements RoutingEngine {
       }
       const validation = validateProfile(configuredProfile, this.catalog);
       if (!validation.valid) {
-        return this.audit(params, prompt, {
+        return finish({
           action: "inherit",
           category: stored?.category ?? "PASS_CONTEXT",
           complexity: stored?.complexity ?? deterministicComplexity(prompt),
@@ -242,19 +300,18 @@ export class RouterEngine implements RoutingEngine {
         ...base,
         latencyMs: Math.round(performance.now() - started),
       };
-      this.threadRoutes.set(key, {
+      this.sessionState.set(key, {
         category,
         complexity,
         routeName,
-        profile: { ...validation.profile },
       });
-      return this.audit(params, prompt, decision);
+      return finish(decision);
     }
 
     if (!prompt || rule.suppressed || rule.passContext) {
-      const sticky = this.stickyDecision(params, prompt, rule, started);
-      if (sticky) return this.audit(params, prompt, sticky);
-      return this.audit(params, prompt, {
+      const sticky = this.stickyDecision(params, prompt, rule, initialIntent, started);
+      if (sticky) return finish(sticky);
+      return finish({
         action: "inherit",
         category: "PASS_CONTEXT",
         complexity: deterministicComplexity(prompt),
@@ -271,6 +328,13 @@ export class RouterEngine implements RoutingEngine {
       aiResult = { status: "error" };
     }
     const ai = aiResult?.decision;
+    const resolvedIntent = resolveExecutionIntent(prompt, ai ? { aiIntent: ai.intent } : {});
+    const resolvedBase = {
+      ...base,
+      intent: resolvedIntent.intent,
+      intentSource: resolvedIntent.source,
+      intentReason: resolvedIntent.reason,
+    };
     const aiMetadata = {
       ...(ai ? { ai } : {}),
       ...(aiResult ? { aiStatus: aiResult.status } : {}),
@@ -288,14 +352,14 @@ export class RouterEngine implements RoutingEngine {
     }
 
     if (category === "PASS_CONTEXT") {
-      const sticky = this.stickyDecision(params, prompt, rule, started);
-      if (sticky) return this.audit(params, prompt, { ...sticky, ...aiMetadata });
-      return this.audit(params, prompt, {
+      const sticky = this.stickyDecision(params, prompt, rule, resolvedIntent, started);
+      if (sticky) return finish({ ...sticky, ...aiMetadata });
+      return finish({
         action: "inherit",
         category,
         complexity: this.mergeComplexity(deterministicComplexity(prompt), ai),
         reason: ai ? "ai_below_threshold" : "unclassified_fail_open",
-        ...base,
+        ...resolvedBase,
         ...aiMetadata,
         latencyMs: Math.round(performance.now() - started),
       });
@@ -305,12 +369,12 @@ export class RouterEngine implements RoutingEngine {
     const routeName = this.chooseRoute(category, complexity);
     const configuredProfile = routeName ? this.config.routes[routeName] : undefined;
     if (!routeName || !configuredProfile) {
-      return this.audit(params, prompt, {
+      return finish({
         action: "inherit",
         category,
         complexity,
         reason: "route_inherit",
-        ...base,
+        ...resolvedBase,
         ...aiMetadata,
         latencyMs: Math.round(performance.now() - started),
       });
@@ -318,13 +382,13 @@ export class RouterEngine implements RoutingEngine {
 
     const validation = validateProfile(configuredProfile, this.catalog);
     if (!validation.valid) {
-      return this.audit(params, prompt, {
+      return finish({
         action: "inherit",
         category,
         complexity,
         routeName,
         reason: validation.reason ?? "invalid_route_profile",
-        ...base,
+        ...resolvedBase,
         ...aiMetadata,
         latencyMs: Math.round(performance.now() - started),
       });
@@ -337,16 +401,15 @@ export class RouterEngine implements RoutingEngine {
       routeName,
       profile: { ...validation.profile },
       reason: rule.category !== "PASS_CONTEXT" ? "rule_plus_ai" : "ai_fallback",
-      ...base,
+      ...resolvedBase,
       ...aiMetadata,
       latencyMs: Math.round(performance.now() - started),
     };
-    this.threadRoutes.set(key, {
+    this.sessionState.set(key, {
       category,
       complexity,
       routeName,
-      profile: { ...validation.profile },
     });
-    return this.audit(params, prompt, decision);
+    return finish(decision);
   }
 }

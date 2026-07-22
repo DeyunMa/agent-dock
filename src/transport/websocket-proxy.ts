@@ -2,7 +2,9 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createInterface } from "node:readline";
 import { WebSocket, WebSocketServer } from "ws";
+import { publishDecisionEvent } from "../presentation/decision-events.js";
 import type { RoutingEngine } from "../routing/engine.js";
+import { ClientLineDispatcher } from "./client-line-dispatcher.js";
 import { backendEnvironment, forwardSignals } from "./codex-process.js";
 import { ProtocolRouter } from "./protocol-router.js";
 
@@ -26,6 +28,13 @@ export async function runInteractiveProxy(
 ): Promise<number> {
   const protocol = new ProtocolRouter(engine, {
     manualModelOverride: options.manualModelOverride ?? false,
+    surface: "terminal",
+    onDecision: async ({ decision, threadId, triggeredAt }) => {
+      await publishDecisionEvent(engine.config, "terminal", decision, {
+        triggeredAt,
+        ...(threadId ? { threadId } : {}),
+      }).catch(() => undefined);
+    },
   });
   const backend = spawn(realCodex, ["app-server"], {
     stdio: ["pipe", "pipe", "pipe"],
@@ -33,7 +42,7 @@ export async function runInteractiveProxy(
   });
   const cleanupBackendSignals = forwardSignals(backend);
   let client: WebSocket | undefined;
-  let clientQueue = Promise.resolve();
+  let dispatcher: ClientLineDispatcher | undefined;
   let backendError = "";
   backend.stderr?.on("data", (chunk: Buffer) => {
     backendError = `${backendError}${chunk.toString("utf8")}`.slice(-8000);
@@ -51,20 +60,22 @@ export async function runInteractiveProxy(
       return;
     }
     client = socket;
+    dispatcher = new ClientLineDispatcher(
+      (line) => protocol.transformClientLine(line),
+      async (line) => {
+        if (!backend.stdin?.writable) return;
+        if (!backend.stdin.write(`${line}\n`)) {
+          await new Promise<void>((resolve) => backend.stdin?.once("drain", resolve));
+        }
+      },
+    );
     socket.on("message", (data, isBinary) => {
       if (isBinary) return;
-      const line = data.toString();
-      clientQueue = clientQueue
-        .then(async () => {
-          const transformed = await protocol.transformClientLine(line);
-          if (!backend.stdin?.writable) return;
-          if (!backend.stdin.write(`${transformed}\n`)) {
-            await new Promise<void>((resolve) => backend.stdin?.once("drain", resolve));
-          }
-        })
-        .catch(() => undefined);
+      dispatcher?.dispatch(data.toString());
     });
-    socket.once("close", () => backend.stdin?.end());
+    socket.once("close", () => {
+      void dispatcher?.drain().finally(() => backend.stdin?.end());
+    });
   });
 
   const backendLines = createInterface({ input: backend.stdout!, crlfDelay: Infinity });

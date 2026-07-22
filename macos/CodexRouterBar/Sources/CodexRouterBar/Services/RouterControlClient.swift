@@ -25,6 +25,31 @@ struct RouterControlClient {
         try await requestStatus(path: "v1/status", timeout: 2)
     }
 
+    func fetchDecisions(after cursor: String?) async throws -> DecisionFeedStatus {
+        var components = URLComponents(
+            url: baseURL.appending(path: "v1/decisions"),
+            resolvingAgainstBaseURL: false
+        )
+        var queryItems = [URLQueryItem(name: "limit", value: "20")]
+        if let cursor, !cursor.isEmpty {
+            queryItems.append(URLQueryItem(name: "after", value: cursor))
+        }
+        components?.queryItems = queryItems
+        guard let url = components?.url else { throw RouterControlError.invalidResponse }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 1
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw RouterControlError.invalidResponse
+        }
+        guard (200 ... 299).contains(http.statusCode) else {
+            let message = (try? JSONDecoder().decode(ServerError.self, from: data).error)
+                ?? "控制服务错误（HTTP \(http.statusCode)）"
+            throw RouterControlError.server(message)
+        }
+        return try JSONDecoder().decode(DecisionFeedStatus.self, from: data)
+    }
+
     func setEnabled(_ enabled: Bool) async throws -> ControlStatus {
         try await requestStatus(
             path: "v1/router/enabled",

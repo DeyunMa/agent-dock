@@ -6,7 +6,27 @@ if (process.argv.includes("app-server")) {
   const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
   for await (const line of lines) {
     const message = JSON.parse(line);
-    if (message.method === "model/list") {
+    if (message.method === "initialize") {
+      process.stdout.write(`${JSON.stringify({ id: message.id, result: {} })}\n`);
+    } else if (message.method === "thread/read") {
+      process.stdout.write(
+        `${JSON.stringify({
+          id: message.id,
+          result: {
+            thread: {
+              id: message.params.threadId,
+              name: "Fake Router Session",
+              preview: "Inspect and fix the Router timing",
+              cwd: "/tmp/fake-project",
+              source: "vscode",
+              createdAt: 100,
+              updatedAt: 200,
+              recencyAt: 300,
+            },
+          },
+        })}\n`,
+      );
+    } else if (message.method === "model/list") {
       process.stdout.write(
         `${JSON.stringify({
           id: message.id,
@@ -39,10 +59,25 @@ if (process.argv.includes("app-server")) {
       );
     } else if (message.method === "turn/start") {
       process.stdout.write(`${JSON.stringify({ id: 99, result: message.params })}\n`);
+      process.stdout.write(
+        `${JSON.stringify({
+          method: "turn/completed",
+          params: {
+            threadId: message.params.threadId,
+            turn: { id: "fake-turn", status: "completed", items: [] },
+          },
+        })}\n`,
+      );
     } else {
       process.stdout.write(`${line}\n`);
     }
   }
+  process.exit(0);
+}
+
+if (process.argv.includes("exec") || process.argv.includes("e")) {
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  process.stdout.write("fake exec complete\n");
   process.exit(0);
 }
 

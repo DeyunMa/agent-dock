@@ -1,12 +1,19 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { loadConfig } from "../routing/config.js";
 import {
+  CONTROL_SCHEMA_VERSION,
   ControlInputError,
+  readControlDecision,
+  readControlDecisions,
   readControlStatus,
   setRouteProfile,
   setRouterEnabled,
   validateRouteCapabilities,
 } from "./config-store.js";
+import {
+  LocalCodexThreadCatalog,
+  type CodexThreadCatalog,
+} from "./codex-thread-catalog.js";
 import type { GatewayAdapter } from "./gateway.js";
 import { LocalOpenCodexGatewayAdapter } from "./open-codex-gateway.js";
 
@@ -19,6 +26,7 @@ export interface ControlServerOptions {
   configPath?: string;
   version: string;
   gatewayAdapter?: GatewayAdapter;
+  threadCatalog?: CodexThreadCatalog;
 }
 
 function json(response: ServerResponse, status: number, body: unknown): void {
@@ -55,15 +63,18 @@ function isTrustedBrowserOrigin(request: IncomingMessage, options: ControlServer
 
 export function createControlServer(options: ControlServerOptions): Server {
   const gateway = options.gatewayAdapter ?? new LocalOpenCodexGatewayAdapter();
+  const threadCatalog = options.threadCatalog ?? new LocalCodexThreadCatalog();
+  const ownsThreadCatalog = options.threadCatalog === undefined;
   const readStatus = () =>
     readControlStatus({
       ...(options.configPath ? { configPath: options.configPath } : {}),
       endpoint: endpoint(options),
       version: options.version,
       gateway,
+      threadCatalog,
     });
 
-  return createServer(async (request, response) => {
+  const server = createServer(async (request, response) => {
     try {
       const url = new URL(request.url ?? "/", "http://localhost");
       if (
@@ -75,12 +86,45 @@ export function createControlServer(options: ControlServerOptions): Server {
         return;
       }
       if (request.method === "GET" && url.pathname === "/v1/health") {
-        json(response, 200, { schemaVersion: 1, status: "ok" });
+        json(response, 200, {
+          schemaVersion: 2,
+          controlSchemaVersion: CONTROL_SCHEMA_VERSION,
+          version: options.version,
+          status: "ok",
+        });
         return;
       }
 
       if (request.method === "GET" && url.pathname === "/v1/status") {
         json(response, 200, await readStatus());
+        return;
+      }
+
+      if (request.method === "GET" && url.pathname === "/v1/decision") {
+        const latestDecision = await readControlDecision(options.configPath);
+        json(response, 200, {
+          schemaVersion: 1,
+          ...(latestDecision ? { latestDecision } : {}),
+        });
+        return;
+      }
+
+      if (request.method === "GET" && url.pathname === "/v1/decisions") {
+        const afterId = url.searchParams.get("after") ?? undefined;
+        const rawLimit = url.searchParams.get("limit");
+        const limit = rawLimit === null ? undefined : Number(rawLimit);
+        if (
+          (afterId !== undefined && (afterId.length === 0 || afterId.length > 200)) ||
+          (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 50))
+        ) {
+          json(response, 400, { error: "invalid decision cursor or limit" });
+          return;
+        }
+        const decisions = await readControlDecisions(options.configPath, {
+          ...(afterId ? { afterId } : {}),
+          ...(limit !== undefined ? { limit } : {}),
+        });
+        json(response, 200, { schemaVersion: 2, decisions });
         return;
       }
 
@@ -176,6 +220,12 @@ export function createControlServer(options: ControlServerOptions): Server {
       );
     }
   });
+  if (ownsThreadCatalog) {
+    server.once("close", () => {
+      void threadCatalog.close();
+    });
+  }
+  return server;
 }
 
 export async function runControlServer(options: ControlServerOptions): Promise<void> {

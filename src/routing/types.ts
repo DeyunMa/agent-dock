@@ -15,6 +15,10 @@ export type SemanticCategory = (typeof SEMANTIC_CATEGORIES)[number];
 export const COMPLEXITIES = ["simple", "normal", "complex", "extreme"] as const;
 export type Complexity = (typeof COMPLEXITIES)[number];
 
+export const EXECUTION_INTENTS = ["ask", "do", "continue", "control", "unknown"] as const;
+export type ExecutionIntent = (typeof EXECUTION_INTENTS)[number];
+export type IntentSource = "rule" | "ai" | "manual" | "fallback";
+
 export type RouteName = string;
 
 export interface RouteProfile {
@@ -141,6 +145,7 @@ export interface RuleDecision {
 export interface AiDecision {
   category: SemanticCategory;
   complexity: Complexity;
+  intent: ExecutionIntent;
   confidence: number;
   reason: string;
   latencyMs: number;
@@ -173,6 +178,9 @@ export interface ModelCatalog {
 
 export interface RouteDecision {
   action: "apply" | "inherit";
+  intent: ExecutionIntent;
+  intentSource: IntentSource;
+  intentReason: string;
   category: SemanticCategory;
   complexity: Complexity;
   routeName?: RouteName;

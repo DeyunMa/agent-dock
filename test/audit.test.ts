@@ -3,13 +3,20 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { appendAudit, promptHash } from "../src/routing/audit.js";
+import {
+  appendAudit,
+  promptHash,
+  readLatestAuditDecision,
+} from "../src/routing/audit.js";
 import { defaultConfig } from "../src/routing/config.js";
 import type { RouteDecision } from "../src/routing/types.js";
 
 function decision(overrides: Partial<RouteDecision> = {}): RouteDecision {
   return {
     action: "apply",
+    intent: "ask",
+    intentSource: "rule",
+    intentReason: "read_only_request",
     category: "AUDIT_ANALYZE",
     complexity: "simple",
     routeName: "balanced",
@@ -27,6 +34,7 @@ function decision(overrides: Partial<RouteDecision> = {}): RouteDecision {
     ai: {
       category: "AUDIT_ANALYZE",
       complexity: "simple",
+      intent: "ask",
       confidence: 0.95,
       reason: "local_qwen_classifier",
       latencyMs: 12,
@@ -69,27 +77,60 @@ test("audit stores only the Router decision delta", async () => {
       passContext: false,
     },
   });
-  delete failure.routeName;
-  delete failure.profile;
   delete failure.ai;
 
-  await appendAudit(config, { threadId: "thread-1", cwd: "/private/project" }, failure);
+  await appendAudit(
+    config,
+    { threadId: "thread-1", cwd: "/private/project" },
+    failure,
+    { triggeredAt: "2026-07-22T08:00:00.000Z", surface: "desktop" },
+  );
   const event = JSON.parse(await readFile(config.logging.auditFile, "utf8")) as Record<string, unknown>;
 
-  assert.equal(event.schema_version, 2);
+  assert.equal(event.schema_version, 3);
+  assert.equal(event.triggered_at, "2026-07-22T08:00:00.000Z");
+  assert.equal(event.surface, "desktop");
   assert.equal(event.thread_id, "thread-1");
   assert.equal(event.action, "inherit");
+  assert.equal(event.intent, "ask");
+  assert.equal(event.intent_source, "rule");
+  assert.equal(event.intent_reason, "read_only_request");
+  assert.equal(event.route, "native");
   assert.equal(event.ai_status, "timeout");
   assert.equal(event.ai_latency_ms, 3000);
-  assert.equal(event.rule_candidate, "OPERATE_VERIFY");
-  assert.equal(event.rule_margin, 1);
   assert.equal(event.classifier_model, "qwen3.5:2b-q4_K_M");
+  assert.equal("semantic_category" in event, false);
+  assert.equal("complexity" in event, false);
+  assert.equal("ai_category" in event, false);
+  assert.equal("ai_complexity" in event, false);
   assert.equal("model" in event, false);
   assert.equal("effort" in event, false);
   assert.equal("cwd" in event, false);
   assert.equal("prompt" in event, false);
   assert.equal("prompt_chars" in event, false);
   assert.equal("sticky" in event, false);
+});
+
+test("latest audit observation fails open when its path is unreadable", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "codex-router-audit-directory-"));
+  assert.equal(await readLatestAuditDecision(directory), undefined);
+});
+
+test("latest audit decision exposes only the visible intent and route", async () => {
+  const config = await logConfig();
+  await appendAudit(config, { threadId: "thread-3" }, decision(), {
+    triggeredAt: "2026-07-22T08:01:00.000Z",
+    surface: "terminal",
+  });
+
+  const latest = await readLatestAuditDecision(config.logging.auditFile);
+  assert(latest);
+  assert.equal(latest.triggeredAt, "2026-07-22T08:01:00.000Z");
+  assert.equal(latest.surface, "terminal");
+  assert.equal(latest.threadId, "thread-3");
+  assert.equal(latest.intent, "ask");
+  assert.equal(latest.route, "balanced");
+  assert(Number.isFinite(Date.parse(latest.timestamp)));
 });
 
 test("audit keeps one previous file when the active file reaches its limit", async () => {

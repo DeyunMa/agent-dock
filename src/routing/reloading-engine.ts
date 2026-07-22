@@ -1,6 +1,13 @@
 import { stat } from "node:fs/promises";
 import { DEFAULT_CONFIG_PATH, expandHome, loadConfig } from "./config.js";
-import { RouterEngine, type RouteOptions, type RoutingEngine } from "./engine.js";
+import {
+  RouterEngine,
+  RouterSessionState,
+  type AiClassifier,
+  type RouteOptions,
+  type RoutingEngine,
+} from "./engine.js";
+import { OllamaClassifier } from "./ollama-classifier.js";
 import { loadRules } from "./rules.js";
 import type {
   ModelCatalog,
@@ -30,16 +37,25 @@ export class ReloadingRouterEngine implements RoutingEngine {
   private rulesSignature: string;
   private catalog?: ModelCatalog;
   private reloadTask: Promise<void> | undefined;
+  private readonly sessionState: RouterSessionState;
+  private classifier: AiClassifier;
+  private classifierSignature: string;
 
   private constructor(
     private readonly configPath: string,
     engine: RouterEngine,
     configSignature: string,
     rulesSignature: string,
+    sessionState: RouterSessionState,
+    classifier: AiClassifier,
+    classifierSignature: string,
   ) {
     this.engine = engine;
     this.configSignature = configSignature;
     this.rulesSignature = rulesSignature;
+    this.sessionState = sessionState;
+    this.classifier = classifier;
+    this.classifierSignature = classifierSignature;
   }
 
   static async create(
@@ -48,11 +64,17 @@ export class ReloadingRouterEngine implements RoutingEngine {
     const configPath = expandHome(path);
     const config = await loadConfig(configPath);
     const rules = await loadRules(config.rulesFile);
+    const sessionState = new RouterSessionState();
+    const classifier = new OllamaClassifier(config.ollama);
+    const classifierSignature = JSON.stringify(config.ollama);
     return new ReloadingRouterEngine(
       configPath,
-      new RouterEngine(config, rules),
+      new RouterEngine(config, rules, classifier, sessionState),
       await fileSignature(configPath),
       await fileSignature(config.rulesFile),
+      sessionState,
+      classifier,
+      classifierSignature,
     );
   }
 
@@ -89,7 +111,17 @@ export class ReloadingRouterEngine implements RoutingEngine {
     // error bubbles to ProtocolRouter, whose contract is byte-for-byte fail-open.
     const config = await loadConfig(this.configPath);
     const rules = await loadRules(config.rulesFile);
-    const replacement = new RouterEngine(config, rules);
+    const classifierSignature = JSON.stringify(config.ollama);
+    if (classifierSignature !== this.classifierSignature) {
+      this.classifier = new OllamaClassifier(config.ollama);
+      this.classifierSignature = classifierSignature;
+    }
+    const replacement = new RouterEngine(
+      config,
+      rules,
+      this.classifier,
+      this.sessionState,
+    );
     if (this.catalog) replacement.setModelCatalog(this.catalog);
     replacement.warmup();
 

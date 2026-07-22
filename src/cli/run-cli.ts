@@ -1,4 +1,5 @@
 import type { RoutingEngine } from "../routing/engine.js";
+import { publishDecisionEvent } from "../presentation/decision-events.js";
 import {
   extractExecPrompt,
   hasExplicitRoutingArgument,
@@ -57,17 +58,25 @@ export async function runCli(args: string[], engine: RoutingEngine): Promise<num
   if (command === "exec" || command === "e") {
     const prompt = extractExecPrompt(args);
     if (!prompt) return spawnInherited(realCodex, args);
-    const decision = await engine.routeTurn({
-      threadId: "cli-exec",
-      input: [{ type: "text", text: prompt }],
-      cwd: process.cwd(),
-    });
-    return spawnInherited(
+    const triggeredAt = new Date().toISOString();
+    const decision = await engine.routeTurn(
+      {
+        threadId: "cli-exec",
+        input: [{ type: "text", text: prompt }],
+        cwd: process.cwd(),
+      },
+      { triggeredAt, surface: "terminal" },
+    );
+    await publishDecisionEvent(engine.config, "terminal", decision, { triggeredAt }).catch(
+      () => undefined,
+    );
+    const exitCode = await spawnInherited(
       realCodex,
       decision.action === "apply" && decision.profile
         ? injectExecRoute(args, decision.profile)
         : args,
     );
+    return exitCode;
   }
 
   if (command && DIRECT_COMMANDS.has(command)) return spawnInherited(realCodex, args);

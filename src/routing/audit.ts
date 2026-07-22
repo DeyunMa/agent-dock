@@ -1,7 +1,28 @@
 import { createHash } from "node:crypto";
 import { appendFile, mkdir, open, rename, stat, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { RouteDecision, RouterConfig, TurnStartParams } from "./types.js";
+import { visibleDecision } from "./presentation.js";
+import {
+  EXECUTION_INTENTS,
+  type ExecutionIntent,
+  type RouteDecision,
+  type RouterConfig,
+  type TurnStartParams,
+} from "./types.js";
+
+export interface LatestAuditDecision {
+  timestamp: string;
+  triggeredAt: string;
+  surface?: "desktop" | "terminal" | "management";
+  intent: ExecutionIntent;
+  route: string;
+  threadId?: string;
+}
+
+export interface AuditContext {
+  triggeredAt?: string;
+  surface?: "desktop" | "terminal" | "management";
+}
 
 export function promptHash(prompt: string): string {
   return createHash("sha256").update(prompt).digest("hex").slice(0, 16);
@@ -72,15 +93,21 @@ export async function appendAudit(
   config: RouterConfig,
   params: TurnStartParams,
   decision: RouteDecision,
+  context: AuditContext = {},
 ): Promise<void> {
   if (!config.logging.auditFile) return;
+  const visible = visibleDecision(decision);
+  const timestamp = new Date().toISOString();
   const event: Record<string, unknown> = {
-    timestamp: new Date().toISOString(),
-    schema_version: 2,
+    timestamp,
+    triggered_at: context.triggeredAt ?? timestamp,
+    surface: context.surface,
+    schema_version: 3,
     action: decision.action,
-    semantic_category: decision.category,
-    complexity: decision.complexity,
-    route: decision.routeName,
+    intent: visible.intent,
+    intent_source: decision.intentSource,
+    intent_reason: decision.intentReason,
+    route: visible.route,
     fast: decision.profile?.fast,
     reason: decision.reason,
     total_latency_ms: decision.latencyMs,
@@ -92,16 +119,6 @@ export async function appendAudit(
     event.classifier_model = config.ollama.model;
     event.ai_status = decision.aiStatus;
     event.ai_latency_ms = decision.aiLatencyMs;
-    event.ai_category = decision.ai?.category;
-    event.ai_complexity = decision.ai?.complexity;
-    event.ai_confidence = decision.ai?.confidence;
-  }
-
-  if (decision.action === "inherit" || decision.rule.category === "PASS_CONTEXT") {
-    event.rule_reason = decision.rule.reason;
-    event.rule_candidate = decision.rule.candidate;
-    event.rule_margin = decision.rule.margin;
-    event.rule_confidence = decision.rule.confidence;
   }
 
   await mkdir(dirname(config.logging.auditFile), { recursive: true, mode: 0o700 });
@@ -110,4 +127,67 @@ export async function appendAudit(
     encoding: "utf8",
     mode: 0o600,
   });
+}
+
+export async function readLatestAuditDecision(
+  auditFile: string,
+): Promise<LatestAuditDecision | undefined> {
+  let handle;
+  try {
+    handle = await open(auditFile, "r");
+    const size = (await handle.stat()).size;
+    if (size === 0) return undefined;
+    const length = Math.min(size, 16_384);
+    const buffer = Buffer.alloc(length);
+    await handle.read(buffer, 0, length, size - length);
+    const lines = buffer.toString("utf8").trimEnd().split("\n").reverse();
+    for (const line of lines) {
+      try {
+        const event = JSON.parse(line) as {
+          timestamp?: unknown;
+          triggered_at?: unknown;
+          surface?: unknown;
+          intent?: unknown;
+          route?: unknown;
+          thread_id?: unknown;
+        };
+        if (
+          typeof event.timestamp === "string" &&
+          Number.isFinite(Date.parse(event.timestamp)) &&
+          (event.triggered_at === undefined ||
+            (typeof event.triggered_at === "string" &&
+              Number.isFinite(Date.parse(event.triggered_at)))) &&
+          typeof event.intent === "string" &&
+          EXECUTION_INTENTS.includes(event.intent as ExecutionIntent) &&
+          typeof event.route === "string" &&
+          event.route.length > 0
+        ) {
+          return {
+            timestamp: event.timestamp,
+            triggeredAt:
+              typeof event.triggered_at === "string"
+                ? event.triggered_at
+                : event.timestamp,
+            ...(event.surface === "desktop" ||
+            event.surface === "terminal" ||
+            event.surface === "management"
+              ? { surface: event.surface }
+              : {}),
+            intent: event.intent as ExecutionIntent,
+            route: event.route,
+            ...(typeof event.thread_id === "string" ? { threadId: event.thread_id } : {}),
+          };
+        }
+      } catch {
+        // A partially written or legacy line is ignored; scan the prior event.
+      }
+    }
+    return undefined;
+  } catch {
+    // Latest-decision display is optional observation data. It must never make
+    // the Router controls unavailable when the audit path cannot be read.
+    return undefined;
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
 }

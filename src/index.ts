@@ -1,8 +1,10 @@
 import { doctor } from "./cli/doctor.js";
 import { runCli } from "./cli/run-cli.js";
 import { runControlServerCommand } from "./cli/run-control-server.js";
+import { publishDecisionEvent } from "./presentation/decision-events.js";
 import { defaultConfig } from "./routing/config.js";
 import type { RoutingEngine } from "./routing/engine.js";
+import { formatDecisionMarker, visibleDecision } from "./routing/presentation.js";
 import { ReloadingRouterEngine } from "./routing/reloading-engine.js";
 import { spawnInherited } from "./transport/codex-process.js";
 import { runStdioProxy } from "./transport/stdio-proxy.js";
@@ -60,8 +62,8 @@ async function runManagement(args: string[], engine: RoutingEngine): Promise<num
     });
     process.stdout.write(
       args.includes("--json")
-        ? `${JSON.stringify(decision, null, 2)}\n`
-        : `${decision.routeName ?? "inherit"}\t${decision.category}\t${decision.complexity}\n`,
+        ? `${JSON.stringify(visibleDecision(decision), null, 2)}\n`
+        : `${formatDecisionMarker(decision)}\n`,
     );
     return 0;
   }
@@ -100,6 +102,15 @@ async function main(): Promise<number> {
       process.env.CODEX_ROUTER_BACKEND ?? engine.config.codex.desktopBinary,
       args,
       engine,
+      {
+        surface: "desktop",
+        onDecision: async ({ decision, threadId, triggeredAt }) => {
+          await publishDecisionEvent(engine.config, "desktop", decision, {
+            triggeredAt,
+            ...(threadId ? { threadId } : {}),
+          });
+        },
+      },
     );
   }
   return (await runManagement(args, engine)) ?? 2;

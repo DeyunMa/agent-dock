@@ -5,3 +5,4 @@ dist/
 coverage/
 macos/CodexRouterBar/.build/
 macos/CodexRouterBar/.swiftpm/
+local-training/work/

@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "embedding_model": "qwen3-embedding:0.6b",
+  "provider": "ollama",
+  "endpoint": "/api/embed",
+  "ollama_manifest_digest": "ac6da0dfba84a81fdbfbaf330198c33cd77c4cdfc53e8bc50eb581914a15621d",
+  "size_bytes": 639150858,
+  "parameter_size": "595.78M",
+  "quantization": "Q8_0",
+  "context_length": 32768,
+  "expected_dimensions": 1024,
+  "weights_managed_by": "ollama"
+}

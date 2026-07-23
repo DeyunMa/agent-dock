@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "records": 228,
+  "sha256": "51ab1374d76e81d968378d0737d05fbbb42d64d78b2272f71fd3305db065d824",
+  "policy": "The real-only test split is immutable. Regeneration must fail if count or byte hash changes."
+}

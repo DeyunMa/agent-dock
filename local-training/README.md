@@ -146,6 +146,42 @@ file alongside every batch input and result. A new run must create six
 generation results, four independent review results, and its own provenance
 record before `training:finalize-pretraining` can succeed.
 
+## Train the validation baseline
+
+The first training run fits three CPU logistic-regression classifiers. It reads
+only train and validation; the frozen test file is intentionally unopened.
+Embedding input collapses whitespace and keeps the latest 2,000 characters,
+matching the Router's tail-focused low-latency classification contract.
+If a reviewed label is absent from validation, the training view moves the
+minimum required reviewed synthetic records from train to validation without
+rewriting the prepared source bundle.
+
+Create the ignored local Python environment:
+
+```bash
+python3 -m venv local-training/work/venv
+local-training/work/venv/bin/python -m pip install -r local-training/requirements.txt
+pnpm training:test-python
+```
+
+Run the baseline:
+
+```bash
+pnpm training:train-baseline
+```
+
+Embedding vectors, model JSON, validation predictions, and the teacher report
+are written with owner-only permissions under:
+
+```text
+local-training/work/v1/embedding-cache/
+local-training/work/v1/training-runs/baseline-v3/
+```
+
+The exported models contain only coefficients, intercepts, class names, and
+model/data hashes. They do not use pickle or joblib. Do not run the frozen test
+until the validation teacher loop is complete.
+
 ## Validate
 
 ```bash

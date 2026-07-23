@@ -41,17 +41,27 @@ Training may start only when the generated pretraining manifest reports:
 - embedding model digest verified;
 - project checks and local-training tests passing.
 
-## First training experiment
+## Validation experiment
 
-The next phase, intentionally not executed during data preparation:
+Completed without reading the frozen test:
 
-1. embed train/validation/test text locally through loopback Ollama;
+1. embedded train/validation text locally through loopback Ollama;
 2. fit three independent class-weighted linear classifiers on CPU;
-3. tune abstention thresholds on validation only;
-4. report macro-F1, per-class precision/recall, confusion matrices, downstream
-   route accuracy, cold/warm latency, and memory footprint;
-5. compare against rules-only and the current 2B classifier;
-6. do not switch Router runtime until the real-test and latency gates pass.
+3. tuned per-target regularization and inspected confidence thresholds on
+   validation only;
+4. reported macro-F1, per-class precision/recall, confusion matrices,
+   downstream route accuracy, and local resource use.
+
+Still required before a frozen-test run:
+
+1. compare the candidate against rules-only and the current 2B classifier;
+2. evaluate a confidence-gated hybrid where the classifier supplements rules;
+3. finish the teacher review of ambiguous category and complexity boundaries;
+4. do not switch Router runtime until the real-test and latency gates pass.
+
+The outer teacher reviews validation mistakes after the baseline fit, before
+the frozen test is opened. Only after labels, hard negatives, and abstention
+thresholds are stable may one final real-test evaluation run.
 
 Rare labels (`control`, `extreme`, and `unknown`) must be judged by per-class
 recall and confusion behavior, not aggregate accuracy.

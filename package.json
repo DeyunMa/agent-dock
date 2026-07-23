@@ -26,6 +26,8 @@
     "training:prepare-synthetic": "tsx local-training/src/prepare-synthetic-batches.ts",
     "training:prepare-synthetic-review": "tsx local-training/src/prepare-synthetic-review.ts",
     "training:finalize-pretraining": "tsx local-training/src/finalize-pretraining.ts",
+    "training:test-python": "local-training/work/venv/bin/python -m unittest discover -s local-training/python -p 'test_*.py'",
+    "training:train-baseline": "OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 VECLIB_MAXIMUM_THREADS=4 NUMEXPR_NUM_THREADS=4 local-training/work/venv/bin/python local-training/python/train_baseline.py --run-id baseline-v3",
     "training:scrub-derived": "tsx local-training/src/scrub-derived-data.ts",
     "training:verify-model": "tsx local-training/src/verify-model.ts",
     "control": "node dist/src/index.js control-server"

@@ -14,6 +14,8 @@ test("intent rules distinguish observation from execution", () => {
     ["先分析，然后修复并验证", "do"],
     ["帮我修改代码并运行测试", "do"],
     ["那就按这个方案实现吧", "do"],
+    ["实现一个支持重试的 TypeScript 函数并测试。", "do"],
+    ["把按钮颜色改成蓝色并运行测试。", "do"],
     ["继续", "continue"],
     ["你好", "unknown"],
   ] as const;

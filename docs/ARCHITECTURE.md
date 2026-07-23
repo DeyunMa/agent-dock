@@ -40,6 +40,8 @@ routeTurn(params: TurnStartParams): Promise<RouteDecision>
 
 它隐藏规则评分、Ollama 超时、复杂度合并、task sticky state、模型目录校验和审计。协议 Adapter 不理解业务分类，只消费 `RouteDecision`。
 
+在现有早退、手动控制、suppress 和 sticky 判断之后，如果规则已经确定 category，且本地规则也已确定 intent，Router Core 会枚举 AI 在当前单级升档约束下可达的复杂度，并让这些结果复用同一份 Route 解析与模型目录校验实现。只有所有结果都产生相同的 `action / routeName / profile` 时才跳过分类器，并记录 `reason = "rule_only"`；否则仍同步调用分类器。本地 intent 为 `unknown` 时继续调用 AI 补全，因此快路径只放弃 AI metadata，不降低对外展示的意图完整性。
+
 `RouteDecision.intent` 是独立的观测字段：`ask / do / continue / control / unknown`。它不会进入档位计算，也不会写入 prompt、additional context 或任何 agent-visible 字段；CLI、菜单栏和本地审计只展示 `[intent] [route]`。
 
 请求来源由 Transport Adapter 显式标记为 `desktop / terminal / management`，不通过进程列表猜测当前前台应用。终端和 Desktop Adapter 在收到本轮 `turn/start` 时先记录 `triggeredAt`，路由决策产生后立即异步写入目录型 `Decision Feed`；每个事件独立原子落盘，包含 cursor、surface、threadId、意图和档位，最多保留 200 条。菜单栏 App 用 `GET /v1/decisions?after=...` 增量轮询并显示原生 HUD，不等待 Codex 回答完成。
@@ -79,10 +81,11 @@ POST /v1/gateway/dashboard
 2. 明确关闭 Router：直通，且不使用 sticky route。
 3. Router/Hook/Agent 双信号硬规则：`AGENT_WORKFLOW`。
 4. 版本化加权规则集。
-5. Qwen 输出；只有规则 abstain 时才允许它决定 category。
-6. 确定性复杂度与 Qwen 复杂度合并。Qwen 只能上调一级，不能单独选择 `extreme/max`。
-7. category Route 和 complexity Route 取配置顺序中较强者。
-8. 服务端模型目录不支持该 model/effort 时直通。
+5. 规则 category 与本地 intent 均已确定，且所有 AI 可达复杂度产生相同 `action / Route / Profile`：直接使用确定性结果，不调用 Qwen。
+6. 其他情况调用 Qwen；只有规则 abstain 时才允许它决定 category。
+7. 确定性复杂度与 Qwen 复杂度合并。Qwen 只能上调一级，不能单独选择 `extreme/max`。
+8. category Route 和 complexity Route 取配置顺序中较强者。
+9. 服务端模型目录不支持该 model/effort 时直通。
 
 ## 协议不变量
 
@@ -118,5 +121,7 @@ OpenCodex 被启用后位于 Codex 与上游 provider 之间，属于真正的�
 `~/.codex/router/events.jsonl` 是全局 Router 的轻量决策索引，不是第二份会话记录。它通过 `thread_id + prompt_hash + triggered_at + timestamp` 与 Codex 的完整会话 JSONL 关联，只记录来源、意图、实际 Route、Fast、原因和耗时。
 
 Prompt 明文、cwd、实际 model/effort、回答和工具调用仍由 Codex 会话记录管理；category 与 complexity 仅服务于当前 Router 内部计算。这些字段均不写入审计索引或模型上下文。分类器失败时只记录状态和延迟，便于定位超时；意图结果不参与授权或模型档位计算。
+
+确定性快路径仍写入相同的 schema v3 事件，只把 `reason` 记为 `rule_only`；因为分类器没有被调用，所以不出现可选的 `classifier_model / ai_status / ai_latency_ms`。审计 reader、Decision Feed 与 HUD schema 均不变。
 
 日志单文件最大 30MB，超过后将当前文件滚动为 `events.jsonl.1`，只保留这一份历史备份。

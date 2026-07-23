@@ -4,15 +4,18 @@ import { validateProfile } from "./model-catalog.js";
 import { OllamaClassifier } from "./ollama-classifier.js";
 import { deterministicComplexity, extractTurnPrompt } from "./prompt.js";
 import { classifyWithRules } from "./rules.js";
-import type {
-  AiDecision,
-  AiClassification,
-  ModelCatalog,
-  RouteDecision,
-  RouterConfig,
-  RoutingRuleSet,
-  SemanticCategory,
-  TurnStartParams,
+import {
+  COMPLEXITIES,
+  type AiClassification,
+  type AiDecision,
+  type Complexity,
+  type ModelCatalog,
+  type RouteDecision,
+  type RouteProfile,
+  type RouterConfig,
+  type RoutingRuleSet,
+  type SemanticCategory,
+  type TurnStartParams,
 } from "./types.js";
 
 export interface RoutingEngine {
@@ -27,6 +30,18 @@ interface StoredRoute {
   complexity: RouteDecision["complexity"];
   routeName: string;
 }
+
+type ResolvedRoute =
+  | {
+      action: "apply";
+      routeName: string;
+      profile: RouteProfile;
+    }
+  | {
+      action: "inherit";
+      routeName?: string;
+      reason: string;
+    };
 
 export interface RouteOptions {
   manualModelOverride?: boolean;
@@ -179,19 +194,76 @@ export class RouterEngine implements RoutingEngine {
       : categoryRoute;
   }
 
-  private mergeComplexity(
-    deterministic: RouteDecision["complexity"],
-    ai: AiDecision | undefined,
-  ): RouteDecision["complexity"] {
-    if (!ai || ai.confidence < 0.5) return deterministic;
-    const order: RouteDecision["complexity"][] = ["simple", "normal", "complex", "extreme"];
+  private resolveRoute(category: SemanticCategory, complexity: Complexity): ResolvedRoute {
+    const routeName = this.chooseRoute(category, complexity);
+    const configuredProfile = routeName ? this.config.routes[routeName] : undefined;
+    if (!routeName || !configuredProfile) {
+      return { action: "inherit", reason: "route_inherit" };
+    }
+    const validation = validateProfile(configuredProfile, this.catalog);
+    if (!validation.valid) {
+      return {
+        action: "inherit",
+        routeName,
+        reason: validation.reason ?? "invalid_route_profile",
+      };
+    }
+    return {
+      action: "apply",
+      routeName,
+      profile: { ...validation.profile },
+    };
+  }
+
+  private mergeComplexityValue(
+    deterministic: Complexity,
+    aiComplexity: Complexity | undefined,
+    aiConfidence: number | undefined,
+  ): Complexity {
+    if (!aiComplexity || (aiConfidence ?? 0) < 0.5) return deterministic;
+    const order: Complexity[] = ["simple", "normal", "complex", "extreme"];
     const deterministicIndex = order.indexOf(deterministic);
-    const aiIndex = order.indexOf(ai.complexity);
+    const aiIndex = order.indexOf(aiComplexity);
     if (deterministic === "extreme") return "extreme";
     // A 2B classifier is useful for a one-level escalation but is not trusted
     // to jump a short request straight to the most expensive route.
     const aiCeiling = Math.min(deterministicIndex + 1, order.indexOf("complex"));
     return order[Math.max(deterministicIndex, Math.min(aiIndex, aiCeiling))] ?? deterministic;
+  }
+
+  private mergeComplexity(
+    deterministic: RouteDecision["complexity"],
+    ai: AiDecision | undefined,
+  ): RouteDecision["complexity"] {
+    return this.mergeComplexityValue(deterministic, ai?.complexity, ai?.confidence);
+  }
+
+  private routeProjection(resolution: ResolvedRoute): string {
+    return JSON.stringify({
+      action: resolution.action,
+      routeName: resolution.routeName,
+      profile: resolution.action === "apply" ? resolution.profile : undefined,
+    });
+  }
+
+  private classifierCanChangeRoute(
+    category: SemanticCategory,
+    deterministic: Complexity,
+  ): boolean {
+    // Once rules have fixed the category, AI can only affect routing through
+    // complexity. Reuse the real merge and resolution path for every possible
+    // AI complexity so custom/non-monotonic mappings cannot cause a false skip.
+    const projections = new Set(
+      COMPLEXITIES.map((aiComplexity) =>
+        this.routeProjection(
+          this.resolveRoute(
+            category,
+            this.mergeComplexityValue(deterministic, aiComplexity, 1),
+          ),
+        ),
+      ),
+    );
+    return projections.size > 1;
   }
 
   private async audit(
@@ -321,6 +393,42 @@ export class RouterEngine implements RoutingEngine {
       });
     }
 
+    const deterministic = deterministicComplexity(prompt);
+    if (
+      initialIntent.intent !== "unknown" &&
+      rule.category !== "PASS_CONTEXT" &&
+      !this.classifierCanChangeRoute(rule.category, deterministic)
+    ) {
+      const resolution = this.resolveRoute(rule.category, deterministic);
+      if (resolution.action === "inherit") {
+        return finish({
+          action: "inherit",
+          category: rule.category,
+          complexity: deterministic,
+          ...(resolution.routeName ? { routeName: resolution.routeName } : {}),
+          reason: resolution.reason ?? "route_inherit",
+          ...base,
+          latencyMs: Math.round(performance.now() - started),
+        });
+      }
+      const decision: RouteDecision = {
+        action: "apply",
+        category: rule.category,
+        complexity: deterministic,
+        routeName: resolution.routeName,
+        profile: resolution.profile,
+        reason: "rule_only",
+        ...base,
+        latencyMs: Math.round(performance.now() - started),
+      };
+      this.sessionState.set(key, {
+        category: rule.category,
+        complexity: deterministic,
+        routeName: resolution.routeName,
+      });
+      return finish(decision);
+    }
+
     let aiResult: AiClassification | undefined;
     try {
       aiResult = await this.ai.classify(prompt);
@@ -365,29 +473,15 @@ export class RouterEngine implements RoutingEngine {
       });
     }
 
-    const complexity = this.mergeComplexity(deterministicComplexity(prompt), ai);
-    const routeName = this.chooseRoute(category, complexity);
-    const configuredProfile = routeName ? this.config.routes[routeName] : undefined;
-    if (!routeName || !configuredProfile) {
+    const complexity = this.mergeComplexity(deterministic, ai);
+    const resolution = this.resolveRoute(category, complexity);
+    if (resolution.action === "inherit") {
       return finish({
         action: "inherit",
         category,
         complexity,
-        reason: "route_inherit",
-        ...resolvedBase,
-        ...aiMetadata,
-        latencyMs: Math.round(performance.now() - started),
-      });
-    }
-
-    const validation = validateProfile(configuredProfile, this.catalog);
-    if (!validation.valid) {
-      return finish({
-        action: "inherit",
-        category,
-        complexity,
-        routeName,
-        reason: validation.reason ?? "invalid_route_profile",
+        ...(resolution.routeName ? { routeName: resolution.routeName } : {}),
+        reason: resolution.reason ?? "route_inherit",
         ...resolvedBase,
         ...aiMetadata,
         latencyMs: Math.round(performance.now() - started),
@@ -398,8 +492,8 @@ export class RouterEngine implements RoutingEngine {
       action: "apply",
       category,
       complexity,
-      routeName,
-      profile: { ...validation.profile },
+      routeName: resolution.routeName,
+      profile: resolution.profile,
       reason: rule.category !== "PASS_CONTEXT" ? "rule_plus_ai" : "ai_fallback",
       ...resolvedBase,
       ...aiMetadata,
@@ -408,7 +502,7 @@ export class RouterEngine implements RoutingEngine {
     this.sessionState.set(key, {
       category,
       complexity,
-      routeName,
+      routeName: resolution.routeName,
     });
     return finish(decision);
   }

@@ -111,6 +111,29 @@ test("audit stores only the Router decision delta", async () => {
   assert.equal("sticky" in event, false);
 });
 
+test("rule-only decisions keep the v3 audit shape without AI fields", async () => {
+  const config = await logConfig();
+  const fastPath = decision({
+    reason: "rule_only",
+    latencyMs: 4,
+  });
+  delete fastPath.ai;
+  delete fastPath.aiStatus;
+  delete fastPath.aiLatencyMs;
+
+  await appendAudit(config, { threadId: "rule-only" }, fastPath);
+  const event = JSON.parse(
+    await readFile(config.logging.auditFile, "utf8"),
+  ) as Record<string, unknown>;
+
+  assert.equal(event.schema_version, 3);
+  assert.equal(event.reason, "rule_only");
+  assert.equal(event.total_latency_ms, 4);
+  assert.equal("classifier_model" in event, false);
+  assert.equal("ai_status" in event, false);
+  assert.equal("ai_latency_ms" in event, false);
+});
+
 test("latest audit observation fails open when its path is unreadable", async () => {
   const directory = await mkdtemp(join(tmpdir(), "codex-router-audit-directory-"));
   assert.equal(await readLatestAuditDecision(directory), undefined);

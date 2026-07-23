@@ -30,11 +30,197 @@ class FakeAi implements AiClassifier {
   }
 }
 
+class CountingAi implements AiClassifier {
+  calls = 0;
+
+  constructor(private readonly decision: Omit<AiDecision, "latencyMs">) {}
+
+  async warmup(): Promise<void> {}
+
+  async classify(): Promise<AiClassification> {
+    this.calls += 1;
+    return {
+      status: "ok",
+      decision: { ...this.decision, latencyMs: 1 },
+      latencyMs: 1,
+    };
+  }
+}
+
 function config() {
   const value = defaultConfig();
   value.logging.auditFile = "";
   return value;
 }
+
+test("route-invariant rules skip the AI classifier", async () => {
+  const ai = new CountingAi({
+    category: "RESEARCH_EXPLAIN",
+    complexity: "normal",
+    intent: "ask",
+    confidence: 0.9,
+    reason: "would-not-change-route",
+  });
+  const decision = await new RouterEngine(config(), rules, ai).routeTurn({
+    threadId: "route-invariant",
+    input: [{ type: "text", text: "介绍一下 LiteLLM 是什么？" }],
+  });
+
+  assert.equal(ai.calls, 0);
+  assert.equal(decision.action, "apply");
+  assert.equal(decision.routeName, "quick");
+  assert.equal(decision.reason, "rule_only");
+  assert.equal(decision.aiStatus, undefined);
+});
+
+test("route-invariant rules still use AI to resolve an unknown intent", async () => {
+  const ai = new CountingAi({
+    category: "IMPLEMENT_CHANGE",
+    complexity: "normal",
+    intent: "do",
+    confidence: 0.9,
+    reason: "resolve-unknown-intent",
+  });
+  const decision = await new RouterEngine(config(), rules, ai).routeTurn({
+    threadId: "route-invariant-unknown-intent",
+    input: [
+      {
+        type: "text",
+        text: "按钮颜色修改与测试",
+      },
+    ],
+  });
+
+  assert.equal(ai.calls, 1);
+  assert.equal(decision.action, "apply");
+  assert.equal(decision.routeName, "balanced");
+  assert.equal(decision.intent, "do");
+  assert.equal(decision.intentSource, "ai");
+  assert.equal(decision.reason, "rule_plus_ai");
+});
+
+test("route-impacting complexity still invokes the AI classifier", async () => {
+  const ai = new CountingAi({
+    category: "OPERATE_VERIFY",
+    complexity: "complex",
+    intent: "do",
+    confidence: 0.9,
+    reason: "route-impacting-escalation",
+  });
+  const decision = await new RouterEngine(config(), rules, ai).routeTurn({
+    threadId: "route-impacting",
+    input: [
+      {
+        type: "text",
+        text: "请修改当前页面的按钮颜色、间距和字体大小，同时更新对应测试与使用说明，保持其他行为不变。为了便于验收，请列出修改文件、运行测试并汇报结果，除此之外不要调整其他页面。",
+      },
+    ],
+  });
+
+  assert.equal(ai.calls, 1);
+  assert.equal(decision.action, "apply");
+  assert.equal(decision.routeName, "deep");
+  assert.equal(decision.reason, "rule_plus_ai");
+});
+
+test("rule abstention still invokes the AI classifier", async () => {
+  const ai = new CountingAi({
+    category: "IMPLEMENT_CHANGE",
+    complexity: "normal",
+    intent: "do",
+    confidence: 0.9,
+    reason: "resolve-abstention",
+  });
+  const decision = await new RouterEngine(config(), rules, ai).routeTurn({
+    threadId: "rule-abstention",
+    input: [{ type: "text", text: "处理一下" }],
+  });
+
+  assert.equal(ai.calls, 1);
+  assert.equal(decision.routeName, "balanced");
+  assert.equal(decision.reason, "ai_fallback");
+});
+
+test("non-monotonic complexity mappings never produce a false classifier skip", async () => {
+  const custom = config();
+  custom.routing.complexityRoutes.normal = "deep";
+  custom.routing.complexityRoutes.complex = "balanced";
+  const ai = new CountingAi({
+    category: "RESEARCH_EXPLAIN",
+    complexity: "complex",
+    intent: "ask",
+    confidence: 0.9,
+    reason: "non-monotonic-route-change",
+  });
+  const decision = await new RouterEngine(custom, rules, ai).routeTurn({
+    threadId: "non-monotonic",
+    input: [
+      {
+        type: "text",
+        text: "只回答这个问题：请详细解释本地应用里配置文件、命令行参数和环境变量分别适合保存哪些设置，并比较它们在可读性、修改便利性、团队协作和启动行为方面的差别，同时补充普通用户应该如何选择，不要执行任何操作。",
+      },
+    ],
+  });
+
+  assert.equal(ai.calls, 1);
+  assert.equal(decision.routeName, "balanced");
+});
+
+test("existing bypass, manual, suppression and sticky paths remain classifier-free", async () => {
+  const decision = {
+    category: "IMPLEMENT_CHANGE" as const,
+    complexity: "complex" as const,
+    intent: "do" as const,
+    confidence: 0.9,
+    reason: "must-not-run",
+  };
+
+  const disabledConfig = config();
+  disabledConfig.enabled = false;
+  const disabledAi = new CountingAi(decision);
+  await new RouterEngine(disabledConfig, rules, disabledAi).routeTurn({
+    threadId: "disabled",
+    input: [{ type: "text", text: "实现这个功能" }],
+  });
+  assert.equal(disabledAi.calls, 0);
+
+  const manualAi = new CountingAi(decision);
+  await new RouterEngine(config(), rules, manualAi).routeTurn(
+    {
+      threadId: "manual-override",
+      input: [{ type: "text", text: "实现这个功能" }],
+    },
+    { manualModelOverride: true },
+  );
+  assert.equal(manualAi.calls, 0);
+
+  const earlyAi = new CountingAi(decision);
+  const engine = new RouterEngine(config(), rules, earlyAi);
+  await engine.routeTurn({
+    threadId: "suppressed",
+    input: [{ type: "text", text: "不要使用路由，直接回答" }],
+  });
+  await engine.routeTurn({
+    threadId: "manual-control",
+    input: [{ type: "text", text: "最高强度" }],
+  });
+  await engine.routeTurn({
+    threadId: "continuation-without-state",
+    input: [{ type: "text", text: "继续" }],
+  });
+  assert.equal(earlyAi.calls, 0);
+
+  await engine.routeTurn({
+    threadId: "sticky",
+    input: [{ type: "text", text: "介绍一下 LiteLLM 是什么？" }],
+  });
+  const sticky = await engine.routeTurn({
+    threadId: "sticky",
+    input: [{ type: "text", text: "继续" }],
+  });
+  assert.equal(sticky.reason, "sticky_context");
+  assert.equal(earlyAi.calls, 0);
+});
 
 test("strong weighted rules beat a mistaken local-model category", async () => {
   const engine = new RouterEngine(

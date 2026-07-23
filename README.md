@@ -34,11 +34,12 @@ Router 不修改原始 prompt，不改变权限、sandbox 或工具配置；Olla
 ## 工作方式
 
 1. 使用版本化的加权规则集，提供确定性强证据和控制护栏。
-2. `Qwen3.5 2B Q4` 只判断模糊语义和复杂度，不负责授权，也不能覆盖 Router/Hook 控制类硬规则。
-3. 配置把语义类型和复杂度映射为 Route。
-4. 代理只改 App Server 的 `turn/start.params.model / effort / serviceTier`；如果有 `collaborationMode`，同步其 model/effort 设置。
-5. “继续、好的”之类短续话沿用同一 task 的上一次路由；明确“不要路由”则该轮原样直通。
-6. 整条消息为“加强一点 / 再加强一点 / 提高一档”时升一级；“最高强度 / 拉满”进入最高档；“恢复自动 / 自动路由”清除 task 的人工档位。
+2. 规则已经确定类型且本地意图也已确定后，Router 会先判断 AI 的所有可达复杂度是否可能改变最终 `action / Route / Profile`；结果不可能变化时直接走毫秒级 `rule_only` 路径。
+3. 只有规则 abstain 或 AI 仍可能改变最终档位时，才调用 `Qwen3.5 2B Q4` 补充模糊语义和复杂度；它不负责授权，也不能覆盖 Router/Hook 控制类硬规则。
+4. 配置把语义类型和复杂度映射为 Route。
+5. 代理只改 App Server 的 `turn/start.params.model / effort / serviceTier`；如果有 `collaborationMode`，同步其 model/effort 设置。
+6. “继续、好的”之类短续话沿用同一 task 的上一次路由；明确“不要路由”则该轮原样直通。
+7. 整条消息为“加强一点 / 再加强一点 / 提高一档”时升一级；“最高强度 / 拉满”进入最高档；“恢复自动 / 自动路由”清除 task 的人工档位。
 
 详细设计见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 四档下一版策略见 [docs/ROUTING-STRATEGY.md](docs/ROUTING-STRATEGY.md)（仅提案，未改变当前行为）。
@@ -54,6 +55,8 @@ Router 不修改原始 prompt，不改变权限、sandbox 或工具配置；Olla
 - 迁移前 Hook 归档：`~/.codex/router/backups/user-prompt-router-20260721-pre-router/`
 
 审计日志是 Codex 会话 JSONL 的轻量路由索引：只保存 `thread_id`、prompt hash、意图、实际档位、原因、分类器状态和延迟；不保存 prompt 明文、category、complexity、cwd、实际 model/effort 或工具记录。完整对话事实仍由 `~/.codex/sessions/` 保存。
+
+低延迟确定性路径继续使用审计 schema v3，记录 `reason = "rule_only"`，且不写可选的 `classifier_model / ai_status / ai_latency_ms`；调用分类器的记录保持原有字段。历史日志无需迁移。
 
 ## 管理命令
 

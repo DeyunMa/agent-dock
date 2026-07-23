@@ -1,21 +1,19 @@
 import { appendAudit, promptHash } from "./audit.js";
-import { resolveExecutionIntent, type IntentDecision } from "./intent.js";
+import { EmbeddingClassifier } from "./embedding-classifier.js";
+import { hardGuard, isExplicitContinuation } from "./hard-guards.js";
 import { validateProfile } from "./model-catalog.js";
-import { OllamaClassifier } from "./ollama-classifier.js";
-import { deterministicComplexity, extractTurnPrompt } from "./prompt.js";
-import { classifyWithRules } from "./rules.js";
-import {
-  COMPLEXITIES,
-  type AiClassification,
-  type AiDecision,
-  type Complexity,
-  type ModelCatalog,
-  type RouteDecision,
-  type RouteProfile,
-  type RouterConfig,
-  type RoutingRuleSet,
-  type SemanticCategory,
-  type TurnStartParams,
+import { extractTurnPrompt } from "./prompt.js";
+import type {
+  AiClassification,
+  Complexity,
+  ExecutionIntent,
+  IntentSource,
+  ModelCatalog,
+  RouteDecision,
+  RouteProfile,
+  RouterConfig,
+  SemanticCategory,
+  TurnStartParams,
 } from "./types.js";
 
 export interface RoutingEngine {
@@ -27,7 +25,7 @@ export interface RoutingEngine {
 
 interface StoredRoute {
   category: SemanticCategory;
-  complexity: RouteDecision["complexity"];
+  complexity: Complexity;
   routeName: string;
 }
 
@@ -54,13 +52,19 @@ export interface AiClassifier {
   warmup(): Promise<void>;
 }
 
+interface IntentMetadata {
+  intent: ExecutionIntent;
+  intentSource: IntentSource;
+  intentReason: string;
+}
+
 type RoutingControl = "step_up" | "max" | "auto";
 
 const MAX_STORED_THREAD_ROUTES = 256;
 
 /**
- * Session continuity is owned independently from a particular config/rules
- * snapshot, so a hot reload cannot silently forget the current thread route.
+ * Session continuity is owned independently from a particular config or
+ * classifier snapshot, so hot reloads cannot forget the current thread route.
  */
 export class RouterSessionState {
   private readonly routes = new Map<string, StoredRoute>();
@@ -96,13 +100,23 @@ function normalizeControlText(value: string): string {
     .trim();
 }
 
+function fallbackIntent(
+  prompt: string,
+  reason: string,
+): IntentMetadata {
+  return {
+    intent: isExplicitContinuation(prompt) ? "continue" : "unknown",
+    intentSource: "fallback",
+    intentReason: reason,
+  };
+}
+
 export class RouterEngine implements RoutingEngine {
   private catalog?: ModelCatalog;
 
   constructor(
     readonly config: RouterConfig,
-    private readonly rules: RoutingRuleSet,
-    private readonly ai: AiClassifier = new OllamaClassifier(config.ollama),
+    private readonly ai: AiClassifier = new EmbeddingClassifier(config.classifier),
     private readonly sessionState = new RouterSessionState(),
   ) {}
 
@@ -112,45 +126,6 @@ export class RouterEngine implements RoutingEngine {
 
   setModelCatalog(catalog: ModelCatalog): void {
     this.catalog = catalog;
-  }
-
-  private stickyDecision(
-    params: TurnStartParams,
-    prompt: string,
-    rule: ReturnType<typeof classifyWithRules>,
-    intent: IntentDecision,
-    started: number,
-  ): RouteDecision | undefined {
-    if (!this.config.routing.stickyTurns || rule.suppressed) return undefined;
-    const key = params.threadId ?? "__default__";
-    const stored = this.sessionState.get(key);
-    if (!stored) return undefined;
-    const configuredProfile = this.config.routes[stored.routeName];
-    if (!configuredProfile) {
-      this.sessionState.delete(key);
-      return undefined;
-    }
-    const validation = validateProfile(configuredProfile, this.catalog);
-    if (!validation.valid) {
-      this.sessionState.delete(key);
-      return undefined;
-    }
-    return {
-      action: "apply",
-      intent: intent.intent,
-      intentSource: intent.source,
-      intentReason: intent.reason,
-      category: stored.category,
-      complexity: stored.complexity,
-      routeName: stored.routeName,
-      profile: { ...validation.profile },
-      reason: "sticky_context",
-      rule,
-      sticky: true,
-      promptHash: promptHash(prompt),
-      promptChars: prompt.length,
-      latencyMs: Math.round(performance.now() - started),
-    };
   }
 
   private routeRank(name: string): number {
@@ -183,7 +158,7 @@ export class RouterEngine implements RoutingEngine {
     });
   }
 
-  private chooseRoute(category: SemanticCategory, complexity: RouteDecision["complexity"]): string | undefined {
+  private chooseRoute(category: SemanticCategory, complexity: Complexity): string | undefined {
     const categoryRoute = this.config.routing.categoryRoutes[category];
     const complexityRoute = this.config.routing.complexityRoutes[complexity];
     if (categoryRoute === "inherit" && complexityRoute === "inherit") return undefined;
@@ -215,55 +190,39 @@ export class RouterEngine implements RoutingEngine {
     };
   }
 
-  private mergeComplexityValue(
-    deterministic: Complexity,
-    aiComplexity: Complexity | undefined,
-    aiConfidence: number | undefined,
-  ): Complexity {
-    if (!aiComplexity || (aiConfidence ?? 0) < 0.5) return deterministic;
-    const order: Complexity[] = ["simple", "normal", "complex", "extreme"];
-    const deterministicIndex = order.indexOf(deterministic);
-    const aiIndex = order.indexOf(aiComplexity);
-    if (deterministic === "extreme") return "extreme";
-    // A 2B classifier is useful for a one-level escalation but is not trusted
-    // to jump a short request straight to the most expensive route.
-    const aiCeiling = Math.min(deterministicIndex + 1, order.indexOf("complex"));
-    return order[Math.max(deterministicIndex, Math.min(aiIndex, aiCeiling))] ?? deterministic;
-  }
-
-  private mergeComplexity(
-    deterministic: RouteDecision["complexity"],
-    ai: AiDecision | undefined,
-  ): RouteDecision["complexity"] {
-    return this.mergeComplexityValue(deterministic, ai?.complexity, ai?.confidence);
-  }
-
-  private routeProjection(resolution: ResolvedRoute): string {
-    return JSON.stringify({
-      action: resolution.action,
-      routeName: resolution.routeName,
-      profile: resolution.action === "apply" ? resolution.profile : undefined,
-    });
-  }
-
-  private classifierCanChangeRoute(
-    category: SemanticCategory,
-    deterministic: Complexity,
-  ): boolean {
-    // Once rules have fixed the category, AI can only affect routing through
-    // complexity. Reuse the real merge and resolution path for every possible
-    // AI complexity so custom/non-monotonic mappings cannot cause a false skip.
-    const projections = new Set(
-      COMPLEXITIES.map((aiComplexity) =>
-        this.routeProjection(
-          this.resolveRoute(
-            category,
-            this.mergeComplexityValue(deterministic, aiComplexity, 1),
-          ),
-        ),
-      ),
-    );
-    return projections.size > 1;
+  private stickyDecision(
+    params: TurnStartParams,
+    prompt: string,
+    intent: IntentMetadata,
+    started: number,
+  ): RouteDecision | undefined {
+    if (!this.config.routing.stickyTurns) return undefined;
+    const key = params.threadId ?? "__default__";
+    const stored = this.sessionState.get(key);
+    if (!stored) return undefined;
+    const configuredProfile = this.config.routes[stored.routeName];
+    if (!configuredProfile) {
+      this.sessionState.delete(key);
+      return undefined;
+    }
+    const validation = validateProfile(configuredProfile, this.catalog);
+    if (!validation.valid) {
+      this.sessionState.delete(key);
+      return undefined;
+    }
+    return {
+      action: "apply",
+      ...intent,
+      category: stored.category,
+      complexity: stored.complexity,
+      routeName: stored.routeName,
+      profile: { ...validation.profile },
+      reason: "sticky_context",
+      sticky: true,
+      promptHash: promptHash(prompt),
+      promptChars: prompt.length,
+      latencyMs: Math.round(performance.now() - started),
+    };
   }
 
   private async audit(
@@ -287,41 +246,43 @@ export class RouterEngine implements RoutingEngine {
   async routeTurn(params: TurnStartParams, options: RouteOptions = {}): Promise<RouteDecision> {
     const started = performance.now();
     const prompt = extractTurnPrompt(params);
-    const rule = classifyWithRules(prompt, this.rules);
     const key = params.threadId ?? "__default__";
     const control = this.routingControl(prompt);
-    const initialIntent = resolveExecutionIntent(prompt, { control: control !== undefined });
-    const base = {
-      rule,
-      intent: initialIntent.intent,
-      intentSource: initialIntent.source,
-      intentReason: initialIntent.reason,
+    const finish = (decision: RouteDecision) =>
+      this.audit(params, prompt, decision, options.triggeredAt, options.surface);
+    const common = {
       sticky: false,
       promptHash: promptHash(prompt),
       promptChars: prompt.length,
     };
-    const finish = (decision: RouteDecision) =>
-      this.audit(params, prompt, decision, options.triggeredAt, options.surface);
 
     if (!this.config.enabled || options.manualModelOverride) {
       return finish({
         action: "inherit",
-        category: rule.category,
-        complexity: deterministicComplexity(prompt),
+        ...fallbackIntent(prompt, "router_bypass"),
+        category: "PASS_CONTEXT",
+        complexity: "normal",
         reason: !this.config.enabled ? "router_disabled" : "manual_model_override",
-        ...base,
+        ...common,
         latencyMs: Math.round(performance.now() - started),
       });
     }
+
+    const manualIntent: IntentMetadata = {
+      intent: "control",
+      intentSource: "manual",
+      intentReason: "router_control",
+    };
 
     if (control === "auto") {
       this.sessionState.delete(key);
       return finish({
         action: "inherit",
+        ...manualIntent,
         category: "PASS_CONTEXT",
-        complexity: deterministicComplexity(prompt),
+        complexity: "normal",
         reason: "manual_auto",
-        ...base,
+        ...common,
         latencyMs: Math.round(performance.now() - started),
       });
     }
@@ -338,13 +299,16 @@ export class RouterEngine implements RoutingEngine {
             ? routeOrder[Math.min(baselineIndex + 1, routeOrder.length - 1)]
             : this.config.routing.controls.fallbackRoute;
       const configuredProfile = routeName ? this.config.routes[routeName] : undefined;
+      const category = stored?.category ?? "PASS_CONTEXT";
+      const complexity = stored?.complexity ?? "normal";
       if (!routeName || !configuredProfile) {
         return finish({
           action: "inherit",
-          category: stored?.category ?? "PASS_CONTEXT",
-          complexity: stored?.complexity ?? deterministicComplexity(prompt),
+          ...manualIntent,
+          category,
+          complexity,
           reason: "manual_control_route_missing",
-          ...base,
+          ...common,
           latencyMs: Math.round(performance.now() - started),
         });
       }
@@ -352,156 +316,123 @@ export class RouterEngine implements RoutingEngine {
       if (!validation.valid) {
         return finish({
           action: "inherit",
-          category: stored?.category ?? "PASS_CONTEXT",
-          complexity: stored?.complexity ?? deterministicComplexity(prompt),
+          ...manualIntent,
+          category,
+          complexity,
           reason: validation.reason ?? "manual_control_route_invalid",
-          ...base,
+          ...common,
           latencyMs: Math.round(performance.now() - started),
         });
       }
-
-      const category = stored?.category ?? "PASS_CONTEXT";
-      const complexity = stored?.complexity ?? deterministicComplexity(prompt);
       const decision: RouteDecision = {
         action: "apply",
+        ...manualIntent,
         category,
         complexity,
         routeName,
         profile: { ...validation.profile },
         reason: control === "max" ? "manual_max" : "manual_step_up",
-        ...base,
+        ...common,
         latencyMs: Math.round(performance.now() - started),
       };
-      this.sessionState.set(key, {
-        category,
-        complexity,
-        routeName,
-      });
+      this.sessionState.set(key, { category, complexity, routeName });
       return finish(decision);
     }
 
-    if (!prompt || rule.suppressed || rule.passContext) {
-      const sticky = this.stickyDecision(params, prompt, rule, initialIntent, started);
-      if (sticky) return finish(sticky);
+    const guard = hardGuard(prompt);
+    if (guard) {
       return finish({
         action: "inherit",
+        ...fallbackIntent(prompt, guard.reason),
         category: "PASS_CONTEXT",
-        complexity: deterministicComplexity(prompt),
-        reason: rule.reason,
-        ...base,
+        complexity: "normal",
+        reason: guard.reason,
+        ...common,
         latencyMs: Math.round(performance.now() - started),
       });
     }
 
-    const deterministic = deterministicComplexity(prompt);
-    if (
-      initialIntent.intent !== "unknown" &&
-      rule.category !== "PASS_CONTEXT" &&
-      !this.classifierCanChangeRoute(rule.category, deterministic)
-    ) {
-      const resolution = this.resolveRoute(rule.category, deterministic);
-      if (resolution.action === "inherit") {
-        return finish({
-          action: "inherit",
-          category: rule.category,
-          complexity: deterministic,
-          ...(resolution.routeName ? { routeName: resolution.routeName } : {}),
-          reason: resolution.reason ?? "route_inherit",
-          ...base,
-          latencyMs: Math.round(performance.now() - started),
-        });
-      }
-      const decision: RouteDecision = {
-        action: "apply",
-        category: rule.category,
-        complexity: deterministic,
-        routeName: resolution.routeName,
-        profile: resolution.profile,
-        reason: "rule_only",
-        ...base,
-        latencyMs: Math.round(performance.now() - started),
-      };
-      this.sessionState.set(key, {
-        category: rule.category,
-        complexity: deterministic,
-        routeName: resolution.routeName,
-      });
-      return finish(decision);
-    }
-
-    let aiResult: AiClassification | undefined;
+    let aiResult: AiClassification;
     try {
       aiResult = await this.ai.classify(prompt);
     } catch {
       aiResult = { status: "error" };
     }
-    const ai = aiResult?.decision;
-    const resolvedIntent = resolveExecutionIntent(prompt, ai ? { aiIntent: ai.intent } : {});
-    const resolvedBase = {
-      ...base,
-      intent: resolvedIntent.intent,
-      intentSource: resolvedIntent.source,
-      intentReason: resolvedIntent.reason,
-    };
+    const ai = aiResult.decision;
     const aiMetadata = {
       ...(ai ? { ai } : {}),
-      ...(aiResult ? { aiStatus: aiResult.status } : {}),
-      ...(aiResult?.latencyMs !== undefined ? { aiLatencyMs: aiResult.latencyMs } : {}),
+      aiStatus: aiResult.status,
+      ...(aiResult.latencyMs !== undefined ? { aiLatencyMs: aiResult.latencyMs } : {}),
     };
 
-    let category = rule.category;
-    if (
-      category === "PASS_CONTEXT" &&
-      ai &&
-      ai.category !== "PASS_CONTEXT" &&
-      ai.confidence >= this.config.ollama.minimumConfidence
-    ) {
-      category = ai.category;
-    }
-
-    if (category === "PASS_CONTEXT") {
-      const sticky = this.stickyDecision(params, prompt, rule, resolvedIntent, started);
-      if (sticky) return finish({ ...sticky, ...aiMetadata });
+    if (!ai) {
+      const intent = fallbackIntent(prompt, `classifier_${aiResult.status}`);
+      if (intent.intent === "continue") {
+        const sticky = this.stickyDecision(params, prompt, intent, started);
+        if (sticky) return finish({ ...sticky, ...aiMetadata });
+      }
       return finish({
         action: "inherit",
-        category,
-        complexity: this.mergeComplexity(deterministicComplexity(prompt), ai),
-        reason: ai ? "ai_below_threshold" : "unclassified_fail_open",
-        ...resolvedBase,
+        ...intent,
+        category: "PASS_CONTEXT",
+        complexity: "normal",
+        reason: "classifier_fail_open",
         ...aiMetadata,
+        ...common,
         latencyMs: Math.round(performance.now() - started),
       });
     }
 
-    const complexity = this.mergeComplexity(deterministic, ai);
-    const resolution = this.resolveRoute(category, complexity);
+    const classifierIntent: IntentMetadata = {
+      intent: ai.intent,
+      intentSource: "classifier",
+      intentReason: "local_embedding_classifier",
+    };
+    if (ai.category === "PASS_CONTEXT") {
+      const sticky = this.stickyDecision(params, prompt, classifierIntent, started);
+      if (sticky) return finish({ ...sticky, ...aiMetadata });
+      return finish({
+        action: "inherit",
+        ...classifierIntent,
+        category: ai.category,
+        complexity: ai.complexity,
+        reason: "classifier_pass_context",
+        ...aiMetadata,
+        ...common,
+        latencyMs: Math.round(performance.now() - started),
+      });
+    }
+
+    const resolution = this.resolveRoute(ai.category, ai.complexity);
     if (resolution.action === "inherit") {
       return finish({
         action: "inherit",
-        category,
-        complexity,
+        ...classifierIntent,
+        category: ai.category,
+        complexity: ai.complexity,
         ...(resolution.routeName ? { routeName: resolution.routeName } : {}),
-        reason: resolution.reason ?? "route_inherit",
-        ...resolvedBase,
+        reason: resolution.reason,
         ...aiMetadata,
+        ...common,
         latencyMs: Math.round(performance.now() - started),
       });
     }
 
     const decision: RouteDecision = {
       action: "apply",
-      category,
-      complexity,
+      ...classifierIntent,
+      category: ai.category,
+      complexity: ai.complexity,
       routeName: resolution.routeName,
       profile: resolution.profile,
-      reason: rule.category !== "PASS_CONTEXT" ? "rule_plus_ai" : "ai_fallback",
-      ...resolvedBase,
+      reason: "embedding_primary",
       ...aiMetadata,
+      ...common,
       latencyMs: Math.round(performance.now() - started),
     };
     this.sessionState.set(key, {
-      category,
-      complexity,
+      category: ai.category,
+      complexity: ai.complexity,
       routeName: resolution.routeName,
     });
     return finish(decision);

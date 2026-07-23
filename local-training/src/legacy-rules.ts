@@ -1,12 +1,66 @@
 import { readFile } from "node:fs/promises";
-import { scoringText } from "./prompt.js";
+import { scoringText } from "./legacy-prompt.js";
 import {
   SEMANTIC_CATEGORIES,
-  type CategoryRule,
-  type RuleDecision,
-  type RoutingRuleSet,
   type SemanticCategory,
-} from "./types.js";
+} from "../../src/routing/types.js";
+
+export interface RulePattern {
+  regex: string;
+  weight: number;
+}
+
+export interface CategoryRule {
+  id: SemanticCategory;
+  priority: number;
+  context: string;
+  requires?: string[][];
+  patterns?: RulePattern[];
+}
+
+export interface RuleModifier {
+  id: string;
+  regex: string;
+  adjust: Partial<Record<SemanticCategory, number>>;
+}
+
+export interface RoutingRuleSet {
+  schema_version: number;
+  router_version: string;
+  minimum_score: number;
+  minimum_margin: number;
+  minimum_confidence: number;
+  category_thresholds?: Partial<
+    Record<
+      SemanticCategory,
+      { minimum_score?: number; minimum_margin?: number; minimum_confidence?: number }
+    >
+  >;
+  strong_evidence_override?: {
+    minimum_score: number;
+    minimum_margin: number;
+    minimum_confidence: number;
+    minimum_evidence_count: number;
+  };
+  categories: CategoryRule[];
+  modifiers?: RuleModifier[];
+  pass_patterns: string[];
+  suppress_patterns?: string[];
+}
+
+export interface RuleDecision {
+  category: SemanticCategory;
+  candidate?: SemanticCategory;
+  confidence: number;
+  reason: string;
+  scores: Partial<Record<SemanticCategory, number>>;
+  margin?: number;
+  modifierHits?: string[];
+  evidenceCount?: number;
+  preprocessing?: string;
+  suppressed: boolean;
+  passContext: boolean;
+}
 
 export async function loadRules(path: string): Promise<RoutingRuleSet> {
   const parsed = JSON.parse(await readFile(path, "utf8")) as RoutingRuleSet;

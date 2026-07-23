@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   classifyExecutionIntent,
   resolveExecutionIntent,
-} from "../src/routing/intent.js";
+} from "../src/legacy-intent.js";
 
 test("intent rules distinguish observation from execution", () => {
   const fixtures = [

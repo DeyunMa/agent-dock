@@ -1,8 +1,11 @@
 import { spawn } from "node:child_process";
+import { access } from "node:fs/promises";
 import { createInterface } from "node:readline";
+import { join } from "node:path";
 import { isExecutable } from "../routing/config.js";
 import type { RouterConfig } from "../routing/types.js";
 import { backendEnvironment } from "../transport/codex-process.js";
+import { VERSION } from "../version.js";
 
 interface Check {
   name: string;
@@ -10,25 +13,41 @@ interface Check {
   detail: string;
 }
 
-async function probeOllama(config: RouterConfig): Promise<Check> {
-  if (!config.ollama.enabled) return { name: "ollama", ok: true, detail: "disabled by config" };
+async function probeClassifier(config: RouterConfig): Promise<Check> {
+  if (!config.classifier.enabled) {
+    return { name: "classifier", ok: true, detail: "disabled by config" };
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 3000);
   try {
-    const response = await fetch(`${config.ollama.baseUrl}/api/tags`, { signal: controller.signal });
-    if (!response.ok) return { name: "ollama", ok: false, detail: `HTTP ${response.status}` };
+    const response = await fetch(`${config.classifier.baseUrl}/api/tags`, {
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      return { name: "classifier", ok: false, detail: `Ollama HTTP ${response.status}` };
+    }
     const payload = (await response.json()) as { models?: Array<{ name?: string; model?: string }> };
-    const names = (payload.models ?? []).flatMap((model) => [model.name, model.model]).filter(Boolean);
-    const available = names.includes(config.ollama.model);
+    const installed = (payload.models ?? []).find(
+      (model) =>
+        model.name === config.classifier.model ||
+        model.model === config.classifier.model,
+    ) as { name?: string; model?: string; digest?: string } | undefined;
+    const artifacts = ["intent.json", "category.json", "complexity.json"];
+    await Promise.all(
+      artifacts.map((name) => access(join(config.classifier.modelDirectory, name))),
+    );
+    const available =
+      installed !== undefined &&
+      installed.digest === config.classifier.modelDigest;
     return {
-      name: "ollama",
+      name: "classifier",
       ok: available,
       detail: available
-        ? `${config.ollama.model} available at ${config.ollama.baseUrl}`
-        : `${config.ollama.model} not found`,
+        ? `${config.classifier.model} and three linear heads are ready`
+        : `${config.classifier.model} is missing or its digest does not match`,
     };
   } catch (error) {
-    return { name: "ollama", ok: false, detail: (error as Error).message };
+    return { name: "classifier", ok: false, detail: (error as Error).message };
   } finally {
     clearTimeout(timer);
   }
@@ -78,7 +97,17 @@ async function probeModels(binary: string): Promise<{ models: string[]; error?: 
       }
     });
     child.stdin?.write(
-      '{"method":"initialize","id":0,"params":{"clientInfo":{"name":"codex-router-doctor","title":"Codex Router Doctor","version":"0.1.0"}}}\n',
+      `${JSON.stringify({
+        method: "initialize",
+        id: 0,
+        params: {
+          clientInfo: {
+            name: "codex-router-doctor",
+            title: "Codex Router Doctor",
+            version: VERSION,
+          },
+        },
+      })}\n`,
     );
   });
 }
@@ -95,7 +124,7 @@ export async function doctor(config: RouterConfig): Promise<{ ok: boolean; check
     ok: await isExecutable(config.codex.desktopBinary),
     detail: config.codex.desktopBinary,
   });
-  checks.push(await probeOllama(config));
+  checks.push(await probeClassifier(config));
 
   if (checks[0]?.ok) {
     const probe = await probeModels(config.codex.cliBinary);

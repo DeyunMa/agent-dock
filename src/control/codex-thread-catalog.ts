@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
 import { backendEnvironment } from "../transport/codex-process.js";
+import { VERSION } from "../version.js";
 
 export interface CodexThreadSummary {
   id: string;
@@ -141,7 +142,7 @@ export class LocalCodexThreadCatalog implements CodexThreadCatalog {
           clientInfo: {
             name: "codex_router",
             title: "Codex Router",
-            version: "0.1.0",
+            version: VERSION,
           },
         },
         1_500,

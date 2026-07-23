@@ -3,13 +3,13 @@ import { runCli } from "./cli/run-cli.js";
 import { runControlServerCommand } from "./cli/run-control-server.js";
 import { publishDecisionEvent } from "./presentation/decision-events.js";
 import { defaultConfig } from "./routing/config.js";
+import { migrateConfigFile } from "./routing/config-migration.js";
 import type { RoutingEngine } from "./routing/engine.js";
 import { formatDecisionMarker, visibleDecision } from "./routing/presentation.js";
 import { ReloadingRouterEngine } from "./routing/reloading-engine.js";
 import { spawnInherited } from "./transport/codex-process.js";
 import { runStdioProxy } from "./transport/stdio-proxy.js";
-
-const VERSION = "0.1.0";
+import { VERSION } from "./version.js";
 
 function help(): string {
   return `Codex Router ${VERSION}
@@ -17,6 +17,7 @@ function help(): string {
 Usage:
   codex-router doctor [--json]       Check Codex, Ollama and configured routes
   codex-router classify [--json] TEXT
+  codex-router migrate-config        Upgrade the local config to the current schema
   codex-router control-server        Run the loopback control API for the menu bar app
   codex-router cli [CODEX_ARGS...]   Run the transparent CLI adapter
   codex-router app-server ...        Run the Desktop stdio adapter
@@ -74,6 +75,15 @@ async function main(): Promise<number> {
   const args = process.argv.slice(2);
   const cliEntrypoint = process.env.CODEX_ROUTER_ENTRYPOINT === "codex";
   const appServerInvocation = !cliEntrypoint && args.includes("app-server");
+  if (!cliEntrypoint && args[0] === "migrate-config") {
+    const changed = await migrateConfigFile();
+    process.stdout.write(
+      changed
+        ? "[codex-router] config migrated to schema v2\n"
+        : "[codex-router] no config migration was needed\n",
+    );
+    return 0;
+  }
   if (!cliEntrypoint && args[0] === "control-server") {
     return runControlServerCommand(args.slice(1), VERSION);
   }

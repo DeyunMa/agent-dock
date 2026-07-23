@@ -15,7 +15,9 @@
 
 | 路径 | 职责 |
 | --- | --- |
-| `src/routing/` | 路由规则、意图与复杂度、模型档位、审计和热加载 |
+| `src/routing/` | embedding 分类、硬控制、模型档位、审计和热加载 |
+| `resources/classifier-v1/` | 随版本发布、可直接安装的三个线性分类头及 manifest |
+| `local-training/` | 私有数据准备、训练、历史规则基线和模型验证；`work/` 不属于运行时或发布资源 |
 | `src/transport/` | Codex App Server 协议、stdio/WebSocket Adapter 和进程边界 |
 | `src/presentation/` | 只读决策事件流；不得阻塞或改变路由数据面 |
 | `src/control/` | 本机 Control API、原子配置写入和 Gateway 生命周期 |
@@ -35,12 +37,14 @@
 - 不直接编辑 `dist/`、SwiftPM `.build/`、已安装的 App bundle 或 `~/.codex/router/` 下的运行数据；修改源码或生成脚本后重新构建。
 - `.serena/` 是本地分析工具元数据，不属于项目源码，不得纳入提交。
 - 不提交凭据、API Key、会话正文、prompt 明文或其他本机敏感数据。
+- `local-training/work/` 始终保持 Git ignored；只允许把明确通过验证的三个线性头提升到 `resources/classifier-v1/`，提升时同步 manifest、README、架构合同和 bundle 回归测试。
 
 ## 验证
 
 | 修改范围 | 最低验证 |
 | --- | --- |
 | TypeScript | `pnpm check`、`pnpm build` |
+| 发布分类头或安装脚本 | `pnpm check`、`pnpm build`、`./scripts/install-local.sh`、`codex-router doctor` |
 | Swift/macOS | `pnpm build:macos`，并运行受影响的 TypeScript 验证 |
 | 文档或规则文件 | `git diff --check`，并复读变更后的合同是否自洽 |
 

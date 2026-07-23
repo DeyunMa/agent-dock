@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { GatewayConfig } from "../routing/types.js";
+import { VERSION } from "../version.js";
 import type { GatewayAdapter, GatewayModel, GatewaySnapshot } from "./gateway.js";
 import { parseOpenCodexModels } from "./open-codex-catalog.js";
 
@@ -123,7 +124,7 @@ export class LocalOpenCodexGatewayAdapter implements GatewayAdapter {
       return this.cachedCatalog.values;
     }
 
-    for (const query of ["client_version=0.1.0", "ids=cli"]) {
+    for (const query of [`client_version=${encodeURIComponent(VERSION)}`, "ids=cli"]) {
       try {
         const response = await this.fetchImpl(`${normalizedUrl(baseUrl)}/v1/models?${query}`, {
           signal: AbortSignal.timeout(2_500),

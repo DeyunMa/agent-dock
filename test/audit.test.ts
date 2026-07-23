@@ -15,28 +15,19 @@ function decision(overrides: Partial<RouteDecision> = {}): RouteDecision {
   return {
     action: "apply",
     intent: "ask",
-    intentSource: "rule",
-    intentReason: "read_only_request",
+    intentSource: "classifier",
+    intentReason: "local_embedding_classifier",
     category: "AUDIT_ANALYZE",
     complexity: "simple",
     routeName: "balanced",
     profile: { model: "gpt-5.6-terra", effort: "max", fast: false },
-    reason: "rule_plus_ai",
-    rule: {
-      category: "AUDIT_ANALYZE",
-      confidence: 0.9,
-      reason: "classified",
-      scores: { AUDIT_ANALYZE: 5 },
-      margin: 5,
-      suppressed: false,
-      passContext: false,
-    },
+    reason: "embedding_primary",
     ai: {
       category: "AUDIT_ANALYZE",
       complexity: "simple",
       intent: "ask",
       confidence: 0.95,
-      reason: "local_qwen_classifier",
+      reason: "local_embedding_classifier",
       latencyMs: 12,
     },
     aiStatus: "ok",
@@ -66,16 +57,6 @@ test("audit stores only the Router decision delta", async () => {
     reason: "unclassified_fail_open",
     aiStatus: "timeout",
     aiLatencyMs: 3000,
-    rule: {
-      category: "PASS_CONTEXT",
-      candidate: "OPERATE_VERIFY",
-      confidence: 0.75,
-      reason: "below_threshold",
-      scores: { OPERATE_VERIFY: 4, AUDIT_ANALYZE: 3 },
-      margin: 1,
-      suppressed: false,
-      passContext: false,
-    },
   });
   delete failure.ai;
 
@@ -93,12 +74,13 @@ test("audit stores only the Router decision delta", async () => {
   assert.equal(event.thread_id, "thread-1");
   assert.equal(event.action, "inherit");
   assert.equal(event.intent, "ask");
-  assert.equal(event.intent_source, "rule");
-  assert.equal(event.intent_reason, "read_only_request");
+  assert.equal(event.intent_source, "classifier");
+  assert.equal(event.intent_reason, "local_embedding_classifier");
   assert.equal(event.route, "native");
   assert.equal(event.ai_status, "timeout");
   assert.equal(event.ai_latency_ms, 3000);
-  assert.equal(event.classifier_model, "qwen3.5:2b-q4_K_M");
+  assert.equal(event.classifier_model, "qwen3-embedding:0.6b");
+  assert.equal(event.classifier_kind, "embedding_linear_heads");
   assert.equal("semantic_category" in event, false);
   assert.equal("complexity" in event, false);
   assert.equal("ai_category" in event, false);
@@ -111,23 +93,23 @@ test("audit stores only the Router decision delta", async () => {
   assert.equal("sticky" in event, false);
 });
 
-test("rule-only decisions keep the v3 audit shape without AI fields", async () => {
+test("hard-guard decisions keep the v3 audit shape without classifier fields", async () => {
   const config = await logConfig();
   const fastPath = decision({
-    reason: "rule_only",
+    reason: "explicit_suppression",
     latencyMs: 4,
   });
   delete fastPath.ai;
   delete fastPath.aiStatus;
   delete fastPath.aiLatencyMs;
 
-  await appendAudit(config, { threadId: "rule-only" }, fastPath);
+  await appendAudit(config, { threadId: "hard-guard" }, fastPath);
   const event = JSON.parse(
     await readFile(config.logging.auditFile, "utf8"),
   ) as Record<string, unknown>;
 
   assert.equal(event.schema_version, 3);
-  assert.equal(event.reason, "rule_only");
+  assert.equal(event.reason, "explicit_suppression");
   assert.equal(event.total_latency_ms, 4);
   assert.equal("classifier_model" in event, false);
   assert.equal("ai_status" in event, false);

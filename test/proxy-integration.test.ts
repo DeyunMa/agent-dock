@@ -2,26 +2,122 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdtemp, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { readLatestDecisionEvent } from "../src/presentation/decision-events.js";
-import { loadConfig } from "../src/routing/config.js";
+import { defaultConfig, loadConfig } from "../src/routing/config.js";
+import {
+  COMPLEXITIES,
+  EXECUTION_INTENTS,
+  SEMANTIC_CATEGORIES,
+} from "../src/routing/types.js";
 
 const root = new URL("..", import.meta.url).pathname;
 const fakeCodex = new URL("./fixtures/fake-codex.mjs", import.meta.url).pathname;
-const rules = new URL("../resources/router-rules.json", import.meta.url).pathname;
+
+function rows(
+  classes: readonly string[],
+  leftWinner: string,
+  rightWinner: string,
+): number[][] {
+  return classes.map((value) => {
+    if (value === leftWinner) return [2, 0];
+    if (value === rightWinner) return [0, 2];
+    return [-1, -1];
+  });
+}
+
+async function classifierModels(directory: string): Promise<void> {
+  const classifier = defaultConfig().classifier;
+  const heads = {
+    intent: {
+      classes: EXECUTION_INTENTS,
+      coefficients: rows(EXECUTION_INTENTS, "ask", "do"),
+    },
+    category: {
+      classes: SEMANTIC_CATEGORIES,
+      coefficients: rows(
+        SEMANTIC_CATEGORIES,
+        "RESEARCH_EXPLAIN",
+        "AGENT_WORKFLOW",
+      ),
+    },
+    complexity: {
+      classes: COMPLEXITIES,
+      coefficients: rows(COMPLEXITIES, "simple", "complex"),
+    },
+  };
+  await Promise.all(
+    Object.entries(heads).map(([target, head]) =>
+      writeFile(
+        join(directory, `${target}.json`),
+        `${JSON.stringify({
+          schema_version: 1,
+          kind: "multinomial_logistic_regression",
+          target,
+          classes: head.classes,
+          coefficients: head.coefficients,
+          intercepts: head.classes.map(() => 0),
+          embedding_model: classifier.model,
+          embedding_model_digest: classifier.modelDigest,
+          embedding_dimensions: 2,
+          embedding_max_chars: 2000,
+          embedding_preprocessing: "collapse_whitespace_then_tail_v1",
+          normalization: "l2_unit_embedding",
+        })}\n`,
+        { mode: 0o600 },
+      ),
+    ),
+  );
+}
+
+const embeddingServer = createServer(async (request, response) => {
+  if (request.url !== "/api/embed") {
+    response.writeHead(404).end();
+    return;
+  }
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) chunks.push(Buffer.from(chunk));
+  const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { input?: string };
+  const implementation = body.input?.includes("实现") ?? false;
+  response.writeHead(200, { "content-type": "application/json" });
+  response.end(
+    JSON.stringify({ embeddings: [implementation ? [0, 1] : [1, 0]] }),
+  );
+});
+await new Promise<void>((resolve) =>
+  embeddingServer.listen(0, "127.0.0.1", resolve),
+);
+test.after(() => embeddingServer.close());
+const embeddingAddress = embeddingServer.address();
+if (!embeddingAddress || typeof embeddingAddress === "string") {
+  throw new Error("unable to start fake embedding server");
+}
+const embeddingPort = embeddingAddress.port;
 
 async function testConfig(): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "codex-router-test-"));
   const path = join(directory, "router.toml");
+  const models = join(directory, "classifier-v1");
+  await import("node:fs/promises").then(({ mkdir }) =>
+    mkdir(models, { mode: 0o700 }),
+  );
+  await classifierModels(models);
+  const classifier = defaultConfig().classifier;
   await writeFile(
     path,
-    `version = 1
+    `version = 2
 enabled = true
-rules_file = "${rules}"
-[ollama]
-enabled = false
+[classifier]
+enabled = true
+base_url = "http://127.0.0.1:${embeddingPort}"
+model = "${classifier.model}"
+model_digest = "${classifier.modelDigest}"
+model_directory = "${models}"
+timeout_ms = 1000
+keep_alive = "30m"
 [codex]
 cli_binary = "${fakeCodex}"
 desktop_binary = "${fakeCodex}"

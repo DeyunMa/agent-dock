@@ -1,5 +1,7 @@
 import { stat } from "node:fs/promises";
+import { join } from "node:path";
 import { DEFAULT_CONFIG_PATH, expandHome, loadConfig } from "./config.js";
+import { EmbeddingClassifier } from "./embedding-classifier.js";
 import {
   RouterEngine,
   RouterSessionState,
@@ -7,8 +9,6 @@ import {
   type RouteOptions,
   type RoutingEngine,
 } from "./engine.js";
-import { OllamaClassifier } from "./ollama-classifier.js";
-import { loadRules } from "./rules.js";
 import type {
   ModelCatalog,
   RouteDecision,
@@ -26,55 +26,72 @@ async function fileSignature(path: string): Promise<string> {
   }
 }
 
+async function artifactSignature(config: RouterConfig): Promise<string> {
+  return (
+    await Promise.all(
+      ["intent.json", "category.json", "complexity.json"].map((name) =>
+        fileSignature(join(config.classifier.modelDirectory, name)),
+      ),
+    )
+  ).join("|");
+}
+
+export type ClassifierFactory = (config: RouterConfig) => AiClassifier;
+
+const defaultClassifierFactory: ClassifierFactory = (config) =>
+  new EmbeddingClassifier(config.classifier);
+
 /**
- * Keeps the data plane hot while making control-plane TOML edits visible on the
- * next turn. The only steady-state cost is two local stat calls; no gateway or
- * network health check is allowed on this path.
+ * Keeps the data plane hot while making control-plane edits and private model
+ * updates visible on the next turn. Reload failures bubble to ProtocolRouter,
+ * whose contract is byte-for-byte fail-open.
  */
 export class ReloadingRouterEngine implements RoutingEngine {
   private engine: RouterEngine;
   private configSignature: string;
-  private rulesSignature: string;
+  private artifactSignature: string;
   private catalog?: ModelCatalog;
   private reloadTask: Promise<void> | undefined;
   private readonly sessionState: RouterSessionState;
   private classifier: AiClassifier;
-  private classifierSignature: string;
+  private classifierConfigSignature: string;
 
   private constructor(
     private readonly configPath: string,
+    private readonly classifierFactory: ClassifierFactory,
     engine: RouterEngine,
     configSignature: string,
-    rulesSignature: string,
+    classifierArtifactSignature: string,
     sessionState: RouterSessionState,
     classifier: AiClassifier,
-    classifierSignature: string,
+    classifierConfigSignature: string,
   ) {
     this.engine = engine;
     this.configSignature = configSignature;
-    this.rulesSignature = rulesSignature;
+    this.artifactSignature = classifierArtifactSignature;
     this.sessionState = sessionState;
     this.classifier = classifier;
-    this.classifierSignature = classifierSignature;
+    this.classifierConfigSignature = classifierConfigSignature;
   }
 
   static async create(
     path = process.env.CODEX_ROUTER_CONFIG ?? DEFAULT_CONFIG_PATH,
+    classifierFactory: ClassifierFactory = defaultClassifierFactory,
   ): Promise<ReloadingRouterEngine> {
     const configPath = expandHome(path);
     const config = await loadConfig(configPath);
-    const rules = await loadRules(config.rulesFile);
     const sessionState = new RouterSessionState();
-    const classifier = new OllamaClassifier(config.ollama);
-    const classifierSignature = JSON.stringify(config.ollama);
+    const classifier = classifierFactory(config);
+    const classifierConfigSignature = JSON.stringify(config.classifier);
     return new ReloadingRouterEngine(
       configPath,
-      new RouterEngine(config, rules, classifier, sessionState),
+      classifierFactory,
+      new RouterEngine(config, classifier, sessionState),
       await fileSignature(configPath),
-      await fileSignature(config.rulesFile),
+      await artifactSignature(config),
       sessionState,
       classifier,
-      classifierSignature,
+      classifierConfigSignature,
     );
   }
 
@@ -102,32 +119,28 @@ export class ReloadingRouterEngine implements RoutingEngine {
   private async reloadIfChangedUnserialized(): Promise<void> {
     const nextConfigSignature = await fileSignature(this.configPath);
     const configChanged = nextConfigSignature !== this.configSignature;
-    const nextRulesSignature = configChanged
-      ? this.rulesSignature
-      : await fileSignature(this.engine.config.rulesFile);
-    if (!configChanged && nextRulesSignature === this.rulesSignature) return;
+    const nextArtifactSignature = configChanged
+      ? this.artifactSignature
+      : await artifactSignature(this.engine.config);
+    if (!configChanged && nextArtifactSignature === this.artifactSignature) return;
 
-    // Parse and validate everything before replacing the live engine. Any
-    // error bubbles to ProtocolRouter, whose contract is byte-for-byte fail-open.
     const config = await loadConfig(this.configPath);
-    const rules = await loadRules(config.rulesFile);
-    const classifierSignature = JSON.stringify(config.ollama);
-    if (classifierSignature !== this.classifierSignature) {
-      this.classifier = new OllamaClassifier(config.ollama);
-      this.classifierSignature = classifierSignature;
+    const resolvedArtifactSignature = await artifactSignature(config);
+    const classifierConfigSignature = JSON.stringify(config.classifier);
+    if (
+      classifierConfigSignature !== this.classifierConfigSignature ||
+      resolvedArtifactSignature !== this.artifactSignature
+    ) {
+      this.classifier = this.classifierFactory(config);
+      this.classifierConfigSignature = classifierConfigSignature;
     }
-    const replacement = new RouterEngine(
-      config,
-      rules,
-      this.classifier,
-      this.sessionState,
-    );
+    const replacement = new RouterEngine(config, this.classifier, this.sessionState);
     if (this.catalog) replacement.setModelCatalog(this.catalog);
     replacement.warmup();
 
     this.engine = replacement;
     this.configSignature = nextConfigSignature;
-    this.rulesSignature = await fileSignature(config.rulesFile);
+    this.artifactSignature = resolvedArtifactSignature;
   }
 
   async routeTurn(

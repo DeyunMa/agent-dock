@@ -1,12 +1,15 @@
 # Architecture
 
+当前实现版本：`1.3.0`。
+
 ## 设计原则
 
 - Transparent Proxy：用户入口、task、历史、prompt、权限和工具行为保持不变。
-- Fail Open：分类、配置、日志、Ollama 失败都不能阻断 Codex。
-- Hybrid Decision：确定性护栏优先，本地小模型只处理模糊部分。
+- Embedding Primary：正常请求的语义只由 embedding + 本地线性头判断，不再由生成式 2B 模型或加权规则主导。
+- Hard Controls Only：程序化逻辑只处理不可学习的不变量，不参与普通请求的语义分类。
+- Fail Open：分类器、模型产物、配置、日志和展示失败都不能阻断 Codex。
 - Per Turn：长对话中的每个 `turn/start` 都可得到不同参数。
-- Local Only：Ollama 和 CLI 代理仅使用 loopback；无需额外 API key。
+- Local Only：embedding 请求只发送到 loopback Ollama，无需额外 API key。
 
 ```mermaid
 flowchart LR
@@ -14,10 +17,11 @@ flowchart LR
   U --> C["CLI Adapter<br/>temporary WebSocket"]
   D --> P["Protocol Router"]
   C --> P
-  P --> E["Router Core"]
-  E --> R["版本化加权规则<br/>硬护栏"]
-  E --> Q["Ollama Qwen3.5 2B<br/>语义与复杂度"]
-  E --> M["TOML Route Mapping"]
+  P --> E["RouterEngine"]
+  E --> H["Hard Controls<br/>开关 手动档 明确禁用 协议直通"]
+  E --> Q["qwen3-embedding:0.6b<br/>loopback Ollama"]
+  Q --> L["三个本地线性头<br/>intent category complexity"]
+  L --> M["TOML Route Mapping"]
   D -. "surface=desktop" .-> V["Decision Feed"]
   C -. "surface=terminal" .-> V
   V --> HUD["菜单栏 App 原生 HUD"]
@@ -27,69 +31,88 @@ flowchart LR
   UI["Swift 菜单栏"] --> CTL["Control Module<br/>loopback HTTP"]
   CTL --> T["原子 TOML 配置"]
   CTL --> G
-  T -. "文件变化时热加载" .-> E
+  T -. "下一 turn 热加载" .-> E
 ```
 
-## Module 与 Interface
+## Router Core
 
-核心 Module 是 `RouterEngine`，对外只有一个主要 Interface：
+`RouterEngine` 对协议层只暴露一个主要接口：
 
 ```ts
 routeTurn(params: TurnStartParams): Promise<RouteDecision>
 ```
 
-它隐藏规则评分、Ollama 超时、复杂度合并、task sticky state、模型目录校验和审计。协议 Adapter 不理解业务分类，只消费 `RouteDecision`。
+内部顺序固定为：
 
-在现有早退、手动控制、suppress 和 sticky 判断之后，如果规则已经确定 category，且本地规则也已确定 intent，Router Core 会枚举 AI 在当前单级升档约束下可达的复杂度，并让这些结果复用同一份 Route 解析与模型目录校验实现。只有所有结果都产生相同的 `action / routeName / profile` 时才跳过分类器，并记录 `reason = "rule_only"`；否则仍同步调用分类器。本地 intent 为 `unknown` 时继续调用 AI 补全，因此快路径只放弃 AI metadata，不降低对外展示的意图完整性。
+1. Router disabled、CLI 显式模型或其他 transport bypass：原样直通。
+2. 完整消息命中“升一档 / 拉满 / 恢复自动”：确定性执行，不调用分类器。
+3. 明确关闭路由、空请求或内部协议上下文：原样直通。
+4. `EmbeddingClassifier` 调用 loopback `/api/embed`，获得 1,024 维向量。
+5. 三个 multinomial logistic-regression 线性头分别预测 `intent / category / complexity`。
+6. `category Route` 与 `complexity Route` 取 `route_order` 中较强者。
+7. 模型目录校验通过后，仅修改 Codex 路由字段。
+
+没有 confidence fallback。验证集上 embedding 在每个 confidence 区间都优于旧规则；低置信度退回旧规则会降低整体准确率。分类器失败时也不执行语义猜测，而是直接 fail-open。
 
 `RouteDecision.intent` 是独立的观测字段：`ask / do / continue / control / unknown`。它不会进入档位计算，也不会写入 prompt、additional context 或任何 agent-visible 字段；CLI、菜单栏和本地审计只展示 `[intent] [route]`。
 
-请求来源由 Transport Adapter 显式标记为 `desktop / terminal / management`，不通过进程列表猜测当前前台应用。终端和 Desktop Adapter 在收到本轮 `turn/start` 时先记录 `triggeredAt`，路由决策产生后立即异步写入目录型 `Decision Feed`；每个事件独立原子落盘，包含 cursor、surface、threadId、意图和档位，最多保留 200 条。菜单栏 App 用 `GET /v1/decisions?after=...` 增量轮询并显示原生 HUD，不等待 Codex 回答完成。
+## EmbeddingClassifier 深模块
 
-Feed 按请求到达时间而不是分类完成时间排序：较早请求即使晚完成，也不能覆盖较新的会话。菜单栏状态需要标题时，Control Module 只拿事件中的精确 `threadId` 调 Codex `thread/read(includeTurns=false)`；标题、preview 和 cwd 不写入 Feed 或审计日志。Feed、元数据查询和 HUD 都是 fail-open 的观测能力，不进入 Router Core、Codex 协议或模型上下文。
+`EmbeddingClassifier` 隐藏以下细节，`RouterEngine` 只依赖 `AiClassifier` 的 `warmup / classify` 两个方法：
 
-`ReloadingRouterEngine` 是 Router Core 前的配置 Adapter。每个 turn 只做本地文件 metadata 比较；文件未变化时不解析 TOML、不访问 Gateway、不进行网络健康检查。文件变化时先完整解析和校验，再替换当前 `RouterEngine`；task sticky state 由独立、有限容量的 `RouterSessionState` 持有，配置替换不会丢失续话状态，且续话会重新解析当前 Route profile。Ollama 配置未变化时复用已预热的分类器；失败由 `ProtocolRouter` 原样直通。
+- Ollama `/api/embed` 请求、loopback 限制、超时和保活；
+- `collapse_whitespace_then_tail_v1` 预处理；
+- embedding L2 normalization；
+- 三个 JSON 线性头的 schema、类别顺序、维度、模型 digest 一致性校验；
+- logits、softmax、类别和置信度计算；
+- 冷启动期间的有界等待与 fail-open。
 
-Transport 使用逐 `threadId` 的顺序队列：同一 task 的消息保持顺序，不同 task 和全局 JSON-RPC 控制消息可绕过一个正在等待分类的慢请求。最终写入 App Server 仍经单一写队列串行化，避免字节交叉。
-
-菜单栏的 Control Module 是另一条独立 Interface：
+三个已验证线性头随 Router 版本发布：
 
 ```text
-GET  /v1/status
-GET  /v1/decision
-GET  /v1/decisions?after=:cursor&limit=:n
-PUT  /v1/router/enabled
-PUT  /v1/routes/:name
-PUT  /v1/gateway/routed
-POST /v1/gateway/dashboard
+resources/classifier-v1/
+├── manifest.json
+├── intent.json
+├── category.json
+└── complexity.json
 ```
 
-它是配置写入和 Gateway 生命周期的唯一 owner。`LocalOpenCodexGatewayAdapter` 负责 OpenCodex 健康检查、模型发现、`ocx restore / restore back` 和 Dashboard 唤起；这些操作不会进入 Router Core 的 per-turn Interface。
+安装脚本将它们原子复制到：
 
-`GET /v1/status` 的 Gateway snapshot 同时保留兼容用的模型 ID 数组，并提供标准化 `modelCatalog`：provider、是否依赖 Gateway、支持的 reasoning effort、默认 effort 与 service tier。Control Module 在写入 Route 前再次校验这些能力；Swift UI 只负责展示和选择，不维护 provider-specific 能力表。
+```text
+~/.codex/router/classifier-v1/
+├── intent.json
+├── category.json
+└── complexity.json
+```
 
-供应商、账号、密钥和 provider-specific 配置不属于 Router Module。菜单栏只跨过 Dashboard Seam 调用 `ocx gui`，不读取或复制 OpenCodex 的 provider schema。因为上游命令在冷启动时会顺带注入 Codex，Adapter 会保存并恢复调用前的 routed 状态，使“配置 Gateway”与“启用 Gateway”保持正交。
+运行时文件权限为 owner-only。训练输入、embedding cache、验证预测、候选模型和报告继续留在 Git ignored 的 `local-training/work/`；只有经过验证并明确发布的三个线性头进入 `resources/classifier-v1/`。
 
-两个外部 Seam：
+## Sticky 与硬控制
 
-- Desktop Seam：`CODEX_CLI_PATH` -> `codex-router ... app-server ...` -> bundled Codex stdio。
-- CLI Seam：`~/.local/bin/codex` -> 临时 loopback WebSocket -> system Codex App Server stdio。
+Sticky state 只保存每个 task 最近一次实际应用的 `category / complexity / routeName`，最多 256 个 task：
 
-## 决策优先级
+- 分类器返回 `PASS_CONTEXT` 时，可沿用当前 task 的 Route；
+- 分类器超时或冷启动时，只有精确的续话短语可沿用已有 Route；
+- 明确“不要路由”不会使用 sticky；
+- “恢复自动”清除当前 task 的 sticky state。
 
-1. Router disabled、CLI 显式模型、本地 provider 或显式 remote：直通。
-2. 明确关闭 Router：直通，且不使用 sticky route。
-3. Router/Hook/Agent 双信号硬规则：`AGENT_WORKFLOW`。
-4. 版本化加权规则集。
-5. 规则 category 与本地 intent 均已确定，且所有 AI 可达复杂度产生相同 `action / Route / Profile`：直接使用确定性结果，不调用 Qwen。
-6. 其他情况调用 Qwen；只有规则 abstain 时才允许它决定 category。
-7. 确定性复杂度与 Qwen 复杂度合并。Qwen 只能上调一级，不能单独选择 `extreme/max`。
-8. category Route 和 complexity Route 取配置顺序中较强者。
-9. 服务端模型目录不支持该 model/effort 时直通。
+这些行为是会话连续性和用户控制，不是普通请求的语义分类。
 
-## 协议不变量
+## 热加载
 
-仅处理 `method === "turn/start"` 的 JSONL / WebSocket text message。除以下字段外保持消息不变：
+`ReloadingRouterEngine` 在每个 turn 前只比较：
+
+- `router.toml` metadata；
+- `intent.json / category.json / complexity.json` metadata。
+
+未变化时不解析 TOML、不读取模型、不访问 Gateway、不做网络健康检查。变化时先完整解析和校验，再原子替换 `RouterEngine`；`RouterSessionState` 独立持有，因此热加载不会丢失 task 连续性。分类器配置或模型产物变化时才创建并预热新的 classifier。
+
+## Transport 与协议不变量
+
+Desktop 和 CLI Adapter 都把来源显式标记为 `desktop / terminal / management`，不通过进程列表猜测前台应用。同一 `threadId` 的消息保持顺序，不同 task 不会被一个慢 embedding 请求串行阻塞。
+
+仅处理 `method === "turn/start"`，除以下字段外保持消息不变：
 
 ```text
 params.model
@@ -101,27 +124,36 @@ params.collaborationMode.settings.reasoning_effort
 
 `params.input` 不做删除、拼接、重写或注入。其他 JSON-RPC 请求和服务端响应原样转发。
 
-## 生命周期
+## 展示与 Control Module
 
-- Desktop：随 Desktop 的 App Server 子进程启动/退出。
-- CLI：每个交互会话启动一个 Router、一个本机临时 WS listener 和一个 App Server；会话退出全部回收。
-- Ollama：Homebrew service 共享；Router 启动时后台预热，保活 30 分钟。
-- 首次冷启动：不让首轮排队等待模型，直接使用规则结果；预热完成后后续 turn 启用 AI。
-- 配置：Control Module 原子替换 TOML；运行中的 Router 在下一次 turn 热加载。
-- Gateway：默认保持原生 Codex。只有用户显式启用且 OpenCodex 健康时才切换；Gateway 配置变化需要重开 Codex 会话。
+Transport 在本轮决策产生后立即异步写入目录型 Decision Feed；菜单栏 App 通过 `GET /v1/decisions?after=...` 增量读取并显示原生 HUD，不等待 Codex 回答。
 
-## Fail-open 的边界
+Control Module 是配置写入和 Gateway 生命周期的唯一 owner：
 
-Router Core 对规则、Ollama、审计和热加载错误均 fail-open，原始 JSON-RPC 消息会字节级直通。Control Module 离线也不影响数据面。
+```text
+GET  /v1/status
+GET  /v1/decision
+GET  /v1/decisions?after=:cursor&limit=:n
+PUT  /v1/router/enabled
+PUT  /v1/routes/:name
+PUT  /v1/gateway/routed
+POST /v1/gateway/dashboard
+```
 
-OpenCodex 被启用后位于 Codex 与上游 provider 之间，属于真正的数据面依赖，因此不能承诺 Gateway 崩溃时当前会话完全无感。当前 Interface 通过启用前健康检查、状态轮询和显式“恢复原生”降低风险，但不把这个风险伪装成 Router fail-open。
+供应商、账号、API Key 和 provider-specific 配置属于 OpenCodex。菜单栏只通过 Dashboard seam 调用 `ocx gui`，不读取或复制 Gateway 配置。
+
+## 生命周期和 fail-open
+
+- Desktop：随 Codex App Server 子进程启动/退出。
+- CLI：每个交互会话启动一个 Router、一个临时 loopback WebSocket 和一个 Codex App Server。
+- Embedding：Router 启动时后台预热；首轮最多等待 25ms，真实冷加载仍原样直通。
+- 配置：Control Module 原子替换 TOML；下一次 turn 热加载。
+- Gateway：只有用户显式启用且 OpenCodex 健康时才切换。
+
+Router Core 对 embedding、线性头、审计、展示和热加载错误均 fail-open。OpenCodex 被启用后则是真正的数据面依赖，不能承诺其崩溃时当前会话无损切回。
 
 ## 审计日志
 
-`~/.codex/router/events.jsonl` 是全局 Router 的轻量决策索引，不是第二份会话记录。它通过 `thread_id + prompt_hash + triggered_at + timestamp` 与 Codex 的完整会话 JSONL 关联，只记录来源、意图、实际 Route、Fast、原因和耗时。
+`~/.codex/router/events.jsonl` 是轻量决策索引，不是第二份会话记录。schema v3 只记录来源、`thread_id`、prompt hash、意图、实际 Route、Fast、原因、分类器状态和耗时。
 
-Prompt 明文、cwd、实际 model/effort、回答和工具调用仍由 Codex 会话记录管理；category 与 complexity 仅服务于当前 Router 内部计算。这些字段均不写入审计索引或模型上下文。分类器失败时只记录状态和延迟，便于定位超时；意图结果不参与授权或模型档位计算。
-
-确定性快路径仍写入相同的 schema v3 事件，只把 `reason` 记为 `rule_only`；因为分类器没有被调用，所以不出现可选的 `classifier_model / ai_status / ai_latency_ms`。审计 reader、Decision Feed 与 HUD schema 均不变。
-
-日志单文件最大 30MB，超过后将当前文件滚动为 `events.jsonl.1`，只保留这一份历史备份。
+Prompt 明文、cwd、实际 model/effort、回答和工具调用仍由 Codex 会话 JSONL 管理；category 与 complexity 不进入审计或模型上下文。1.3 新增可选的 `classifier_kind = "embedding_linear_heads"`，不改变历史事件的可读性，也不要求迁移旧 JSONL。

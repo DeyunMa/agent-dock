@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "bundle_version": "1.3.0",
+  "source_run": "baseline-v3",
+  "embedding_model": "qwen3-embedding:0.6b",
+  "embedding_model_digest": "ac6da0dfba84a81fdbfbaf330198c33cd77c4cdfc53e8bc50eb581914a15621d",
+  "embedding_dimensions": 1024,
+  "embedding_preprocessing": "collapse_whitespace_then_tail_v1",
+  "contains_prompt_text": false,
+  "files": {
+    "intent.json": {
+      "sha256": "d6d8cfaf39061525b92c43b1256f2a8f0ad3ebc049c14626be7587603ebb7170"
+    },
+    "category.json": {
+      "sha256": "c2d57f0aff455113acad7d067368fa500efa623822eff45ef0e316b21e2b91fe"
+    },
+    "complexity.json": {
+      "sha256": "08ea162cf4c02c39c9d2288d23c320f96a953537e08d488ae6aaa4565fbb9231"
+    }
+  }
+}

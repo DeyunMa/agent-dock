@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "router_version": "1.2.0",
+  "router_version": "legacy-training-seed",
   "minimum_score": 4.0,
   "minimum_margin": 1.25,
   "minimum_confidence": 0.72,

@@ -12,6 +12,7 @@ import {
 } from "../routing/audit.js";
 import {
   DEFAULT_CONFIG_PATH,
+  CURRENT_CONFIG_VERSION,
   expandHome,
   loadConfig,
   routeProfileValidationError,
@@ -109,8 +110,8 @@ function statusFromConfig(
       failOpen: true,
       configPath,
       classifier: {
-        enabled: config.ollama.enabled,
-        model: config.ollama.model,
+        enabled: config.classifier.enabled,
+        model: config.classifier.model,
       },
     },
     routes: config.routing.routeOrder.flatMap((name) => {
@@ -235,7 +236,7 @@ async function readSource(configPath: string): Promise<string> {
     return await readFile(configPath, "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    return "version = 1\n";
+    return `version = ${CURRENT_CONFIG_VERSION}\n`;
   }
 }
 

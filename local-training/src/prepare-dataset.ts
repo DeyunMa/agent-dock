@@ -13,21 +13,24 @@ import { basename, dirname, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { defaultConfig, loadConfig } from "../../src/routing/config.js";
-import { classifyExecutionIntent } from "../../src/routing/intent.js";
 import {
   deterministicComplexity,
   scoringText,
   truncateForClassifier,
-} from "../../src/routing/prompt.js";
-import { classifyWithRules, loadRules } from "../../src/routing/rules.js";
+} from "./legacy-prompt.js";
 import type {
   Complexity,
   ExecutionIntent,
   RouteName,
   RouterConfig,
-  RoutingRuleSet,
   SemanticCategory,
 } from "../../src/routing/types.js";
+import {
+  classifyWithRules,
+  loadRules,
+  type RoutingRuleSet,
+} from "./legacy-rules.js";
+import { classifyExecutionIntent } from "./legacy-intent.js";
 import { redactSensitiveText } from "./redaction.js";
 import {
   assertSeparatedTrees,
@@ -39,7 +42,10 @@ const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const TRAINING_ROOT = resolve(PROJECT_ROOT, "local-training");
 const DEFAULT_SOURCE_ROOT = resolve(homedir(), ".codex/sessions");
 const DEFAULT_OUTPUT_ROOT = resolve(TRAINING_ROOT, "work/v1");
-const DEFAULT_RULES_FILE = resolve(PROJECT_ROOT, "resources/router-rules.json");
+const DEFAULT_RULES_FILE = resolve(
+  TRAINING_ROOT,
+  "resources/legacy-router-rules.json",
+);
 const MAX_PROMPT_CHARS = 3_500;
 
 type Language = "zh" | "en" | "mixed";
@@ -357,12 +363,8 @@ async function currentConfig(): Promise<RouterConfig> {
   }
 }
 
-async function currentRules(config: RouterConfig): Promise<RoutingRuleSet> {
-  try {
-    return await loadRules(config.rulesFile);
-  } catch {
-    return loadRules(DEFAULT_RULES_FILE);
-  }
+async function currentRules(): Promise<RoutingRuleSet> {
+  return loadRules(DEFAULT_RULES_FILE);
 }
 
 function buildRecord(
@@ -545,7 +547,7 @@ export async function prepareDataset(options: CliOptions): Promise<Record<string
     source_files_shrunk_or_replaced: 0,
   };
   const config = await currentConfig();
-  const rules = await currentRules(config);
+  const rules = await currentRules();
   const audit = new Map<string, AuditObservation>();
   await readAudit(config.logging.auditFile, audit);
   await readAudit(`${config.logging.auditFile}.1`, audit);

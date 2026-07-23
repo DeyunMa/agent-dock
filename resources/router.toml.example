@@ -1,16 +1,14 @@
-version = 1
+version = 2
 enabled = true
-rules_file = "~/.codex/router/router-rules.json"
 
-[ollama]
+[classifier]
 enabled = true
 base_url = "http://127.0.0.1:11434"
-model = "qwen3.5:2b-q4_K_M"
-timeout_ms = 3000
+model = "qwen3-embedding:0.6b"
+model_digest = "ac6da0dfba84a81fdbfbaf330198c33cd77c4cdfc53e8bc50eb581914a15621d"
+model_directory = "~/.codex/router/classifier-v1"
+timeout_ms = 1600
 keep_alive = "30m"
-context_length = 4096
-max_prompt_chars = 3500
-minimum_confidence = 0.58
 
 [routing]
 sticky_turns = true

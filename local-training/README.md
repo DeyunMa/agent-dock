@@ -10,8 +10,11 @@ report used to prepare the local Router classifier.
 - Raw unredacted prompts are never copied into this repository.
 - Sanitized local data is written under `local-training/work/` and is ignored
   by Git.
-- Model weights remain in Ollama's managed model store. `model-lock.json`
-  records the exact model expected by this workspace.
+- Embedding weights remain in Ollama's managed model store. Training runs and
+  candidate heads remain under ignored `local-training/work/`. The explicitly
+  released heads are promoted to `resources/classifier-v1/` and copied with
+  owner-only permissions to `~/.codex/router/classifier-v1/` during install.
+  `model-lock.json` records the exact embedding model expected by this workspace.
 - Model verification only sends sanitized samples to a loopback Ollama endpoint.
   It stores neither prompt text nor embedding vectors in its report.
 
@@ -43,6 +46,10 @@ reports/review.md
 
 `trainable-seed.jsonl` is only a deterministic seed set. It is not treated as
 final supervised truth until the review and teacher-label stages are complete.
+The weighted rules used to create and compare that historical seed live under
+`local-training/src/legacy-rules.ts` and
+`local-training/resources/legacy-router-rules.json`; Router 1.3 runtime does
+not import them.
 
 Optional overrides:
 
@@ -168,6 +175,7 @@ Run the baseline:
 
 ```bash
 pnpm training:train-baseline
+pnpm training:evaluate-hybrid
 ```
 
 Embedding vectors, model JSON, validation predictions, and the teacher report
@@ -181,6 +189,23 @@ local-training/work/v1/training-runs/baseline-v3/
 The exported models contain only coefficients, intercepts, class names, and
 model/data hashes. They do not use pickle or joblib. Do not run the frozen test
 until the validation teacher loop is complete.
+
+The validated `baseline-v3` heads currently published with Router 1.3 live in
+`resources/classifier-v1/`. They contain coefficients, intercepts, class names,
+model metadata, and training hashes, but no prompt text, session identifiers,
+embedding vectors, or local paths.
+
+Install the published heads into the Router runtime with:
+
+```bash
+./scripts/install-local.sh
+```
+
+By default the installer reads only `resources/classifier-v1/`. A local
+candidate can be tested without publishing it by setting
+`CODEX_ROUTER_CLASSIFIER_SOURCE` to an absolute model directory. The installer
+never reads or changes source sessions, prepared prompt data, the frozen test,
+or historical Router JSONL.
 
 ## Validate
 

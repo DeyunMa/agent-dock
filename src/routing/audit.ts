@@ -116,7 +116,8 @@ export async function appendAudit(
   };
 
   if (decision.aiStatus) {
-    event.classifier_model = config.ollama.model;
+    event.classifier_model = config.classifier.model;
+    event.classifier_kind = "embedding_linear_heads";
     event.ai_status = decision.aiStatus;
     event.ai_latency_ms = decision.aiLatencyMs;
   }

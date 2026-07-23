@@ -1,4 +1,7 @@
-import type { ExecutionIntent, IntentSource } from "./types.js";
+import type {
+  ExecutionIntent,
+  IntentSource,
+} from "../../src/routing/types.js";
 
 export interface IntentDecision {
   intent: ExecutionIntent;

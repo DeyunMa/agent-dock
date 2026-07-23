@@ -98,6 +98,9 @@ struct RouterPopoverView: View {
         case .connecting:
             return "正在连接"
         case .online:
+            if let version = model.status?.control.version {
+                return "控制服务在线 · v\(version)"
+            }
             return "控制服务在线"
         case .offline:
             return "控制服务离线"

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { migrateConfigSource } from "../src/routing/config-migration.js";
 import { parseConfig } from "../src/routing/config.js";
 import {
   extractExecPrompt,
@@ -29,6 +30,36 @@ test("example config exposes category, model, effort and fast knobs", async () =
     auto: ["恢复自动", "自动路由"],
     fallbackRoute: "deep",
   });
+  assert.equal(config.version, 2);
+  assert.equal(config.classifier.model, "qwen3-embedding:0.6b");
+  assert.equal(config.classifier.timeoutMs, 1600);
+});
+
+test("v1 Ollama config migrates to v2 embedding classifier without changing routes", () => {
+  const migrated = migrateConfigSource(`version = 1
+enabled = false
+rules_file = "~/.codex/router/router-rules.json"
+fail_open = true
+
+[ollama]
+enabled = true
+base_url = "http://127.0.0.1:11434"
+model = "qwen3.5:2b-q4_K_M"
+timeout_ms = 3000
+keep_alive = "15m"
+
+[routes.quick]
+model = "custom/model"
+effort = "low"
+fast = false
+`);
+  const config = parseConfig(migrated);
+  assert.equal(config.version, 2);
+  assert.equal(config.enabled, false);
+  assert.equal(config.classifier.model, "qwen3-embedding:0.6b");
+  assert.equal(config.classifier.keepAlive, "15m");
+  assert.equal(config.routes.quick?.model, "custom/model");
+  assert.doesNotMatch(migrated, /\[ollama\]|rules_file|qwen3\.5:2b/);
 });
 
 test("config rejects ambiguous route order and invalid route profiles", () => {

@@ -15,6 +15,7 @@ import {
 } from "./types.js";
 
 export const DEFAULT_CONFIG_PATH = "~/.codex/router/router.toml";
+export const CURRENT_CONFIG_VERSION = 2;
 
 const DEFAULT_ROUTES: Record<string, RouteProfile> = {
   quick: { model: "gpt-5.6-luna", effort: "low", fast: true },
@@ -57,18 +58,16 @@ export function expandHome(path: string): string {
 
 export function defaultConfig(): RouterConfig {
   return {
-    version: 1,
+    version: CURRENT_CONFIG_VERSION,
     enabled: true,
-    rulesFile: expandHome("~/.codex/router/router-rules.json"),
-    ollama: {
+    classifier: {
       enabled: true,
       baseUrl: "http://127.0.0.1:11434",
-      model: "qwen3.5:2b-q4_K_M",
-      timeoutMs: 3000,
+      model: "qwen3-embedding:0.6b",
+      modelDigest: "ac6da0dfba84a81fdbfbaf330198c33cd77c4cdfc53e8bc50eb581914a15621d",
+      modelDirectory: expandHome("~/.codex/router/classifier-v1"),
+      timeoutMs: 1600,
       keepAlive: "30m",
-      contextLength: 4096,
-      maxPromptChars: 3500,
-      minimumConfidence: 0.58,
     },
     routing: {
       stickyTurns: true,
@@ -140,6 +139,18 @@ function gatewayKind(value: unknown, fallback: GatewayKind): GatewayKind {
   return value === "native-codex" || value === "opencodex" ? value : fallback;
 }
 
+function isLoopbackHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "http:" &&
+      ["127.0.0.1", "localhost", "::1", "[::1]"].includes(url.hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function routeProfileValidationError(profile: RouteProfile): string | undefined {
   if (
     !profile.model.trim() ||
@@ -155,16 +166,23 @@ export function routeProfileValidationError(profile: RouteProfile): string | und
 }
 
 function validateConfig(config: RouterConfig): RouterConfig {
-  if (config.version !== 1) throw new Error(`unsupported config version: ${config.version}`);
-  if (config.ollama.timeoutMs < 100 || config.ollama.timeoutMs > 30_000) {
-    throw new Error("ollama.timeout_ms must be between 100 and 30000");
+  if (config.version !== 1 && config.version !== CURRENT_CONFIG_VERSION) {
+    throw new Error(`unsupported config version: ${config.version}`);
   }
-  if (config.ollama.contextLength < 1024) throw new Error("ollama.context_length must be >= 1024");
-  if (config.ollama.maxPromptChars < 256 || config.ollama.maxPromptChars > 100_000) {
-    throw new Error("ollama.max_prompt_chars must be between 256 and 100000");
+  if (!isLoopbackHttpUrl(config.classifier.baseUrl)) {
+    throw new Error("classifier.base_url must be a loopback HTTP URL");
   }
-  if (config.ollama.minimumConfidence < 0 || config.ollama.minimumConfidence > 1) {
-    throw new Error("ollama.minimum_confidence must be between 0 and 1");
+  if (!config.classifier.model.trim()) {
+    throw new Error("classifier.model must be non-empty");
+  }
+  if (!/^[a-f0-9]{64}$/u.test(config.classifier.modelDigest)) {
+    throw new Error("classifier.model_digest must be a SHA-256 digest");
+  }
+  if (!config.classifier.modelDirectory.trim()) {
+    throw new Error("classifier.model_directory must be non-empty");
+  }
+  if (config.classifier.timeoutMs < 100 || config.classifier.timeoutMs > 30_000) {
+    throw new Error("classifier.timeout_ms must be between 100 and 30000");
   }
   if (config.logging.maxFileBytes < 1024 || config.logging.maxFileBytes > 1024 * 1024 * 1024) {
     throw new Error("logging.max_file_bytes must be between 1024 and 1073741824");
@@ -223,7 +241,8 @@ function validateConfig(config: RouterConfig): RouterConfig {
 export function parseConfig(source: string): RouterConfig {
   const defaults = defaultConfig();
   const raw = table(parse(source));
-  const ollama = table(raw.ollama);
+  const classifier = table(raw.classifier);
+  const legacyOllama = table(raw.ollama);
   const routing = table(raw.routing);
   const controls = table(routing.controls);
   const rawCategoryRoutes = table(routing.category_routes);
@@ -253,18 +272,27 @@ export function parseConfig(source: string): RouterConfig {
   return validateConfig({
     version: numberValue(raw.version, defaults.version),
     enabled: booleanValue(raw.enabled, defaults.enabled),
-    rulesFile: expandHome(stringValue(raw.rules_file, defaults.rulesFile)),
-    ollama: {
-      enabled: booleanValue(ollama.enabled, defaults.ollama.enabled),
-      baseUrl: stringValue(ollama.base_url, defaults.ollama.baseUrl).replace(/\/$/, ""),
-      model: stringValue(ollama.model, defaults.ollama.model),
-      timeoutMs: numberValue(ollama.timeout_ms, defaults.ollama.timeoutMs),
-      keepAlive: stringValue(ollama.keep_alive, defaults.ollama.keepAlive),
-      contextLength: numberValue(ollama.context_length, defaults.ollama.contextLength),
-      maxPromptChars: numberValue(ollama.max_prompt_chars, defaults.ollama.maxPromptChars),
-      minimumConfidence: numberValue(
-        ollama.minimum_confidence,
-        defaults.ollama.minimumConfidence,
+    classifier: {
+      enabled: booleanValue(
+        classifier.enabled,
+        booleanValue(legacyOllama.enabled, defaults.classifier.enabled),
+      ),
+      baseUrl: stringValue(
+        classifier.base_url,
+        stringValue(legacyOllama.base_url, defaults.classifier.baseUrl),
+      ).replace(/\/$/, ""),
+      model: stringValue(classifier.model, defaults.classifier.model),
+      modelDigest: stringValue(
+        classifier.model_digest,
+        defaults.classifier.modelDigest,
+      ),
+      modelDirectory: expandHome(
+        stringValue(classifier.model_directory, defaults.classifier.modelDirectory),
+      ),
+      timeoutMs: numberValue(classifier.timeout_ms, defaults.classifier.timeoutMs),
+      keepAlive: stringValue(
+        classifier.keep_alive,
+        stringValue(legacyOllama.keep_alive, defaults.classifier.keepAlive),
       ),
     },
     routing: {

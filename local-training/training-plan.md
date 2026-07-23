@@ -52,12 +52,21 @@ Completed without reading the frozen test:
 4. reported macro-F1, per-class precision/recall, confusion matrices,
    downstream route accuracy, and local resource use.
 
+Completed after the baseline:
+
+1. compared rules-only, the legacy rules-first merge, confidence fallback, and
+   embedding-primary projection without calling the 2B classifier;
+2. confirmed that every confidence fallback to semantic rules reduced route
+   accuracy;
+3. integrated embedding-primary routing in 1.3 with fail-open hard controls;
+4. verified TypeScript predictions against 15 exported validation predictions
+   and exercised both protocol adapters without opening the frozen test.
+
 Still required before a frozen-test run:
 
-1. compare the candidate against rules-only and the current 2B classifier;
-2. evaluate a confidence-gated hybrid where the classifier supplements rules;
-3. finish the teacher review of ambiguous category and complexity boundaries;
-4. do not switch Router runtime until the real-test and latency gates pass.
+1. finish the teacher review of ambiguous category and complexity boundaries;
+2. stabilize the validation contract and targeted hard negatives;
+3. open the frozen test once for the final generalization measurement.
 
 The outer teacher reviews validation mistakes after the baseline fit, before
 the frozen test is opened. Only after labels, hard negatives, and abstention

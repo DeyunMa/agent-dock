@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { classifyWithRules } from "../src/routing/rules.js";
-import type { RoutingRuleSet } from "../src/routing/types.js";
+import {
+  classifyWithRules,
+  type RoutingRuleSet,
+} from "../src/legacy-rules.js";
 
 const rules = JSON.parse(
-  await readFile(new URL("../resources/router-rules.json", import.meta.url), "utf8"),
+  await readFile(
+    new URL("../resources/legacy-router-rules.json", import.meta.url),
+    "utf8",
+  ),
 ) as RoutingRuleSet;
 
 test("weighted rules preserve the semantic category contract", () => {

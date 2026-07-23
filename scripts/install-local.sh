@@ -4,6 +4,8 @@ set -euo pipefail
 project_dir="${0:A:h:h}"
 router_home="$HOME/.codex/router"
 local_bin="$HOME/.local/bin"
+classifier_source="${CODEX_ROUTER_CLASSIFIER_SOURCE:-$project_dir/resources/classifier-v1}"
+classifier_target="$router_home/classifier-v1"
 
 cd "$project_dir"
 pnpm install --frozen-lockfile
@@ -12,17 +14,41 @@ pnpm build
 
 mkdir -p "$router_home" "$local_bin"
 chmod 700 "$router_home"
-if [[ -f "$router_home/router-rules.json" ]] && \
-   ! cmp -s "$project_dir/resources/router-rules.json" "$router_home/router-rules.json"; then
-  rules_backup="$router_home/backups/rules-$(date +%Y%m%d-%H%M%S)"
-  mkdir -p "$rules_backup"
-  chmod 700 "$router_home/backups" "$rules_backup"
-  cp "$router_home/router-rules.json" "$rules_backup/router-rules.json"
-  chmod 600 "$rules_backup/router-rules.json"
-fi
-cp "$project_dir/resources/router-rules.json" "$router_home/router-rules.json"
 if [[ ! -f "$router_home/router.toml" ]]; then
   cp "$project_dir/resources/router.toml.example" "$router_home/router.toml"
+fi
+
+for model_file in intent.json category.json complexity.json; do
+  if [[ ! -f "$classifier_source/$model_file" ]]; then
+    print -u2 "Missing classifier artifact: $classifier_source/$model_file"
+    print -u2 "Restore resources/classifier-v1 or set CODEX_ROUTER_CLASSIFIER_SOURCE."
+    exit 1
+  fi
+done
+
+classifier_stage="$(mktemp -d "$router_home/.classifier-v1.XXXXXX")"
+trap 'rm -rf "$classifier_stage"' EXIT
+chmod 700 "$classifier_stage"
+for model_file in intent.json category.json complexity.json; do
+  cp "$classifier_source/$model_file" "$classifier_stage/$model_file"
+  chmod 600 "$classifier_stage/$model_file"
+done
+if [[ -d "$classifier_target" ]]; then
+  classifier_backup="$router_home/backups/classifier-$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$router_home/backups"
+  chmod 700 "$router_home/backups"
+  mv "$classifier_target" "$classifier_backup"
+fi
+mv "$classifier_stage" "$classifier_target"
+trap - EXIT
+
+if [[ -f "$router_home/router.toml" ]]; then
+  config_backup="$router_home/backups/config-$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$config_backup"
+  chmod 700 "$router_home/backups" "$config_backup"
+  cp "$router_home/router.toml" "$config_backup/router.toml"
+  chmod 600 "$config_backup/router.toml"
+  CODEX_ROUTER_CONFIG="$router_home/router.toml" node dist/src/index.js migrate-config
 fi
 
 install_link() {

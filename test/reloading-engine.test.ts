@@ -4,21 +4,51 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { setRouteProfile, setRouterEnabled } from "../src/control/config-store.js";
+import type { AiClassifier } from "../src/routing/engine.js";
 import { ReloadingRouterEngine } from "../src/routing/reloading-engine.js";
+import type { AiClassification } from "../src/routing/types.js";
 
-const rulesPath = new URL("../resources/router-rules.json", import.meta.url).pathname;
+class FakeClassifier implements AiClassifier {
+  async warmup(): Promise<void> {}
+
+  async classify(prompt: string): Promise<AiClassification> {
+    if (prompt === "继续") {
+      return {
+        status: "ok",
+        decision: {
+          category: "PASS_CONTEXT",
+          complexity: "simple",
+          intent: "continue",
+          confidence: 0.9,
+          reason: "test",
+          latencyMs: 1,
+        },
+      };
+    }
+    const diagnostic = prompt.includes("500");
+    return {
+      status: "ok",
+      decision: {
+        category: diagnostic ? "DIAGNOSE_FIX" : "RESEARCH_EXPLAIN",
+        complexity: diagnostic ? "complex" : "simple",
+        intent: diagnostic ? "do" : "ask",
+        confidence: 0.9,
+        reason: "test",
+        latencyMs: 1,
+      },
+    };
+  }
+}
+
+const classifierFactory = () => new FakeClassifier();
 
 test("a running Router hot-loads switch and route edits on the next turn", async () => {
   const directory = await mkdtemp(join(tmpdir(), "codex-router-reload-"));
   const configPath = join(directory, "router.toml");
   await writeFile(
     configPath,
-    `version = 1
+    `version = 2
 enabled = true
-rules_file = "${rulesPath}"
-
-[ollama]
-enabled = false
 
 [logging]
 audit_file = "/dev/null"
@@ -36,7 +66,7 @@ fast = false
     { mode: 0o600 },
   );
 
-  const engine = await ReloadingRouterEngine.create(configPath);
+  const engine = await ReloadingRouterEngine.create(configPath, classifierFactory);
   const params = {
     threadId: "reload-test",
     input: [{ type: "text", text: "只回答这个问题即可" }],
@@ -69,12 +99,8 @@ test("hot reload preserves sticky session state and resolves the updated profile
   const configPath = join(directory, "router.toml");
   await writeFile(
     configPath,
-    `version = 1
+    `version = 2
 enabled = true
-rules_file = "${rulesPath}"
-
-[ollama]
-enabled = false
 
 [logging]
 audit_file = "/dev/null"
@@ -87,7 +113,7 @@ fast = false
     { mode: 0o600 },
   );
 
-  const engine = await ReloadingRouterEngine.create(configPath);
+  const engine = await ReloadingRouterEngine.create(configPath, classifierFactory);
   const first = await engine.routeTurn({
     threadId: "sticky-reload",
     input: [{ type: "text", text: "页面持续报 500，定位根因并修复后跑回归测试" }],

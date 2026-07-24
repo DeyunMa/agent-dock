@@ -46,7 +46,7 @@ Router 不修改原始 prompt，不改变权限、sandbox 或工具配置；embe
 
 ## 本机路径
 
-- 源码：`~/Code/codex-router`
+- 源码：当前 Git clone 所在目录（不依赖固定路径）
 - 命令：`~/.local/bin/codex-router`、`~/.local/bin/codex`
 - 配置：`~/.codex/router/router.toml`
 - 发布分类头：`resources/classifier-v1/{intent,category,complexity}.json`

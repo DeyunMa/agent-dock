@@ -90,6 +90,7 @@ export class LocalOpenCodexGatewayAdapter implements GatewayAdapter {
       this.cliPath = (async () => {
         const candidates = [
           process.env.OPENCODEX_CLI_PATH,
+          join(homedir(), ".local", "share", "mise", "shims", "ocx"),
           join(homedir(), ".asdf", "shims", "ocx"),
           join(homedir(), ".local", "bin", "ocx"),
           "/opt/homebrew/bin/ocx",

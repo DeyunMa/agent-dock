@@ -69,6 +69,7 @@ final class ControlServerProcess {
         child.arguments = ["control-server", "--port", "47831"]
         var environment = ProcessInfo.processInfo.environment
         let preferredPaths = [
+            home.appending(path: ".local/share/mise/shims").path,
             home.appending(path: ".asdf/shims").path,
             home.appending(path: ".local/bin").path,
             "/opt/homebrew/bin",

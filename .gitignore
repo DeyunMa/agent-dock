@@ -3,7 +3,11 @@ dist/
 *.tgz
 .DS_Store
 coverage/
-macos/CodexRouterBar/.build/
-macos/CodexRouterBar/.swiftpm/
+macos/AgentDockBar/.build/
+macos/AgentDockBar/.swiftpm/
 local-training/work/
 local-training/python/__pycache__/
+apps/macos/AgentDockBar/.build/
+apps/macos/AgentDockBar/.swiftpm/
+tools/training/work/
+tools/training/python/__pycache__/

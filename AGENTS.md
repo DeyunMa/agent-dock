@@ -2,7 +2,7 @@
 
 ## 仓库定位
 
-- 本仓库实现个人本机使用的 Codex 透明路由器，以及原生 macOS 菜单栏控制面。
+- 本仓库实现个人本机使用的 Agent Dock：Codex 透明路由器与原生 macOS 菜单栏控制面。
 - `docs/ARCHITECTURE.md` 是当前已实现架构的合同；`docs/ROUTING-STRATEGY.md` 在状态明确变更前仅是下一版讨论稿；`README.md` 说明用户入口和本机运行方式。
 
 ## 开始工作前
@@ -15,13 +15,15 @@
 
 | 路径 | 职责 |
 | --- | --- |
-| `src/routing/` | embedding 分类、硬控制、模型档位、审计和热加载 |
-| `resources/classifier-v1/` | 随版本发布、可直接安装的三个线性分类头及 manifest |
-| `local-training/` | 私有数据准备、训练、历史规则基线和模型验证；`work/` 不属于运行时或发布资源 |
-| `src/transport/` | Codex App Server 协议、stdio/WebSocket Adapter 和进程边界 |
-| `src/presentation/` | 只读决策事件流；不得阻塞或改变路由数据面 |
-| `src/control/` | 本机 Control API、原子配置写入和 Gateway 生命周期 |
-| `macos/CodexRouterBar/` | SwiftUI/AppKit 菜单栏、HUD 和控制面 |
+| `src/router/core/` | Router 的分类、硬控制、模型档位、审计和热加载 Implementation |
+| `src/router/adapters/` | Router 的 Codex App Server、stdio/WebSocket、CLI 与进程 Adapter |
+| `src/gateway/` | OpenCodex Gateway Interface、探测、生命周期与模型目录 Adapter |
+| `resources/router/classifier-v1/` | 随版本发布、可直接安装的三个线性分类头及 manifest |
+| `tools/training/` | 私有数据准备、训练、历史规则基线和模型验证；`work/` 不属于运行时或发布资源 |
+| `src/island/` | Island（中转岛）的只读决策事件流；不得阻塞或改变 Router 数据面 |
+| `src/app/control/` | 本机 Control Interface、原子配置写入与 Module 编排 |
+| `src/app/cli/` | 命令入口与 Router CLI Adapter |
+| `apps/macos/AgentDockBar/` | SwiftUI/AppKit 菜单栏、HUD 和控制面 |
 | `test/` | 与上述模块对应的合同、并发和回归测试 |
 
 ## 必须保持的不变量
@@ -34,17 +36,17 @@
 
 ## 文件与运行边界
 
-- 不直接编辑 `dist/`、SwiftPM `.build/`、已安装的 App bundle 或 `~/.codex/router/` 下的运行数据；修改源码或生成脚本后重新构建。
+- 不直接编辑 `dist/`、SwiftPM `.build/`、已安装的 App bundle 或 `~/.agent-dock/` 下的运行数据；修改源码或生成脚本后重新构建。
 - `.serena/` 是本地分析工具元数据，不属于项目源码，不得纳入提交。
 - 不提交凭据、API Key、会话正文、prompt 明文或其他本机敏感数据。
-- `local-training/work/` 始终保持 Git ignored；只允许把明确通过验证的三个线性头提升到 `resources/classifier-v1/`，提升时同步 manifest、README、架构合同和 bundle 回归测试。
+- `tools/training/work/` 始终保持 Git ignored；只允许把明确通过验证的三个线性头提升到 `resources/router/classifier-v1/`，提升时同步 manifest、README、架构合同和 bundle 回归测试。
 
 ## 验证
 
 | 修改范围 | 最低验证 |
 | --- | --- |
 | TypeScript | `pnpm check`、`pnpm build` |
-| 发布分类头或安装脚本 | `pnpm check`、`pnpm build`、`./scripts/install-local.sh`、`codex-router doctor` |
+| 发布分类头或安装脚本 | `pnpm check`、`pnpm build`、`./scripts/local/install.sh`、`agent-dock doctor` |
 | Swift/macOS | `pnpm build:macos`，并运行受影响的 TypeScript 验证 |
 | 文档或规则文件 | `git diff --check`，并复读变更后的合同是否自洽 |
 

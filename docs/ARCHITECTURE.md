@@ -70,7 +70,7 @@ routeTurn(params: TurnStartParams): Promise<RouteDecision>
 三个已验证线性头随 Router 版本发布：
 
 ```text
-resources/classifier-v1/
+resources/router/classifier-v1/
 ├── manifest.json
 ├── intent.json
 ├── category.json
@@ -80,13 +80,13 @@ resources/classifier-v1/
 安装脚本将它们原子复制到：
 
 ```text
-~/.codex/router/classifier-v1/
+~/.agent-dock/classifier-v1/
 ├── intent.json
 ├── category.json
 └── complexity.json
 ```
 
-运行时文件权限为 owner-only。训练输入、embedding cache、验证预测、候选模型和报告继续留在 Git ignored 的 `local-training/work/`；只有经过验证并明确发布的三个线性头进入 `resources/classifier-v1/`。
+运行时文件权限为 owner-only。训练输入、embedding cache、验证预测、候选模型和报告继续留在 Git ignored 的 `tools/training/work/`；只有经过验证并明确发布的三个线性头进入 `resources/router/classifier-v1/`。
 
 ## Sticky 与硬控制
 
@@ -124,11 +124,11 @@ params.collaborationMode.settings.reasoning_effort
 
 `params.input` 不做删除、拼接、重写或注入。其他 JSON-RPC 请求和服务端响应原样转发。
 
-## 展示与 Control Module
+## Island 与 Control Module
 
-Transport 在本轮决策产生后立即异步写入目录型 Decision Feed；菜单栏 App 通过 `GET /v1/decisions?after=...` 增量读取并显示原生 HUD，不等待 Codex 回答。
+Router Adapter 在本轮决策产生后立即异步写入 `src/island/` 持有的目录型 Decision Feed；菜单栏 App 通过 `GET /v1/decisions?after=...` 增量读取并显示原生 HUD，不等待 Codex 回答。Island 当前只提供这个只读事件中转；未来的宠物状态机与设备输出也只能异步消费它。
 
-Control Module 是配置写入和 Gateway 生命周期的唯一 owner：
+Control Module 是配置写入与本机 HTTP 编排入口；Gateway Module 自己封装 OpenCodex 生命周期：
 
 ```text
 GET  /v1/status
@@ -154,6 +154,6 @@ Router Core 对 embedding、线性头、审计、展示和热加载错误均 fai
 
 ## 审计日志
 
-`~/.codex/router/events.jsonl` 是轻量决策索引，不是第二份会话记录。schema v3 只记录来源、`thread_id`、prompt hash、意图、实际 Route、Fast、原因、分类器状态和耗时。
+`~/.agent-dock/events.jsonl` 是轻量决策索引，不是第二份会话记录。schema v3 只记录来源、`thread_id`、prompt hash、意图、实际 Route、Fast、原因、分类器状态和耗时。
 
 Prompt 明文、cwd、实际 model/effort、回答和工具调用仍由 Codex 会话 JSONL 管理；category 与 complexity 不进入审计或模型上下文。1.3 新增可选的 `classifier_kind = "embedding_linear_heads"`，不改变历史事件的可读性，也不要求迁移旧 JSONL。

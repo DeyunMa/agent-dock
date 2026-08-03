@@ -1,26 +1,26 @@
-import { doctor } from "./cli/doctor.js";
-import { runCli } from "./cli/run-cli.js";
-import { runControlServerCommand } from "./cli/run-control-server.js";
-import { publishDecisionEvent } from "./presentation/decision-events.js";
-import { defaultConfig } from "./routing/config.js";
-import { migrateConfigFile } from "./routing/config-migration.js";
-import type { RoutingEngine } from "./routing/engine.js";
-import { formatDecisionMarker, visibleDecision } from "./routing/presentation.js";
-import { ReloadingRouterEngine } from "./routing/reloading-engine.js";
-import { spawnInherited } from "./transport/codex-process.js";
-import { runStdioProxy } from "./transport/stdio-proxy.js";
+import { doctor } from "./app/cli/doctor.js";
+import { runCli } from "./app/cli/run-cli.js";
+import { runControlServerCommand } from "./app/cli/run-control-server.js";
+import { publishDecisionEvent } from "./island/decision-feed.js";
+import { defaultConfig } from "./router/core/config.js";
+import { migrateConfigFile } from "./router/core/config-migration.js";
+import type { RoutingEngine } from "./router/core/engine.js";
+import { formatDecisionMarker, visibleDecision } from "./router/core/presentation.js";
+import { ReloadingRouterEngine } from "./router/core/reloading-engine.js";
+import { spawnInherited } from "./router/adapters/codex-process.js";
+import { runStdioProxy } from "./router/adapters/stdio-proxy.js";
 import { VERSION } from "./version.js";
 
 function help(): string {
-  return `Codex Router ${VERSION}
+  return `Agent Dock ${VERSION}
 
 Usage:
-  codex-router doctor [--json]       Check Codex, Ollama and configured routes
-  codex-router classify [--json] TEXT
-  codex-router migrate-config        Upgrade the local config to the current schema
-  codex-router control-server        Run the loopback control API for the menu bar app
-  codex-router cli [CODEX_ARGS...]   Run the transparent CLI adapter
-  codex-router app-server ...        Run the Desktop stdio adapter
+  agent-dock doctor [--json]       Check Codex, Ollama and configured routes
+  agent-dock classify [--json] TEXT
+  agent-dock migrate-config        Upgrade the local config to the current schema
+  agent-dock control-server        Run the loopback control API for the menu bar app
+  agent-dock cli [CODEX_ARGS...]   Run the transparent CLI adapter
+  agent-dock app-server ...        Run the Desktop stdio adapter
 
 Normal use does not require these commands: open Codex Desktop normally or type codex.`;
 }
@@ -53,7 +53,7 @@ async function runManagement(args: string[], engine: RoutingEngine): Promise<num
   if (command === "classify") {
     const prompt = args.filter((argument, index) => index > 0 && argument !== "--json").join(" ");
     if (!prompt) {
-      process.stderr.write("codex-router classify requires prompt text\n");
+      process.stderr.write("agent-dock classify requires prompt text\n");
       return 2;
     }
     const decision = await engine.routeTurn({
@@ -73,14 +73,14 @@ async function runManagement(args: string[], engine: RoutingEngine): Promise<num
 
 async function main(): Promise<number> {
   const args = process.argv.slice(2);
-  const cliEntrypoint = process.env.CODEX_ROUTER_ENTRYPOINT === "codex";
+  const cliEntrypoint = process.env.AGENT_DOCK_ENTRYPOINT === "codex";
   const appServerInvocation = !cliEntrypoint && args.includes("app-server");
   if (!cliEntrypoint && args[0] === "migrate-config") {
     const changed = await migrateConfigFile();
     process.stdout.write(
       changed
-        ? "[codex-router] config migrated to schema v2\n"
-        : "[codex-router] no config migration was needed\n",
+        ? "[agent-dock] config migrated to schema v2\n"
+        : "[agent-dock] no config migration was needed\n",
     );
     return 0;
   }
@@ -91,11 +91,11 @@ async function main(): Promise<number> {
   try {
     engine = await createEngine();
   } catch (error) {
-    process.stderr.write(`[codex-router] configuration unavailable; failing open: ${(error as Error).message}\n`);
+    process.stderr.write(`[agent-dock] configuration unavailable; failing open: ${(error as Error).message}\n`);
     const fallback = defaultConfig();
     if (appServerInvocation) {
       return spawnInherited(
-        process.env.CODEX_ROUTER_BACKEND ?? fallback.codex.desktopBinary,
+        process.env.AGENT_DOCK_BACKEND ?? fallback.codex.desktopBinary,
         args,
       );
     }
@@ -109,7 +109,7 @@ async function main(): Promise<number> {
   if (args[0] === "cli") return runCli(args.slice(1), engine);
   if (appServerInvocation) {
     return runStdioProxy(
-      process.env.CODEX_ROUTER_BACKEND ?? engine.config.codex.desktopBinary,
+      process.env.AGENT_DOCK_BACKEND ?? engine.config.codex.desktopBinary,
       args,
       engine,
       {

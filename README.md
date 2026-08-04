@@ -44,6 +44,10 @@ Router 不修改原始 prompt，不改变权限、sandbox 或工具配置；embe
 四档下一版策略见 [docs/ROUTING-STRATEGY.md](docs/ROUTING-STRATEGY.md)（仅提案，未改变当前行为）。
 回滚方式见 [docs/ROLLBACK.md](docs/ROLLBACK.md)。
 当前结构、三个功能 Module 与 Island 后续演进见 [docs/MODULE-PLAN.md](docs/MODULE-PLAN.md)（目录已落地；不包含新的 Island / Pet 行为）。
+Hook 如何驱动 Island、如何避免宠物高频动作，以及 CodeIsland 可借鉴的边界见
+[docs/ISLAND-IMPLEMENTATION.md](docs/ISLAND-IMPLEMENTATION.md)（设计文档，尚未实现）。
+M4X 插件版系统的调研、两阶段设备路线与实机到手前的停止点见
+[docs/M4X-PLUGIN-INTEGRATION.md](docs/M4X-PLUGIN-INTEGRATION.md)。
 
 ## 本机路径
 

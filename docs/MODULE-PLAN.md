@@ -1,9 +1,14 @@
 # Agent Dock 模块结构与后续演进
 
-> 状态：**当前工作区已完成 Router、Gateway、Island 的物理目录整理，尚未提交或推送；没有改变既有运行行为。**
+> 状态：**Router、Gateway、Island 的物理目录整理已提交并推送；没有改变既有运行行为。**
 >
 > 本文记录现在的仓库结构与后续 Island 演进。已实现的运行合同仍以
 > [ARCHITECTURE.md](./ARCHITECTURE.md) 为准。
+>
+> Island 的 Hook 输入、状态机、隐私边界与输出 Adapter 方案见
+> [ISLAND-IMPLEMENTATION.md](./ISLAND-IMPLEMENTATION.md)。
+> M4 的 M4X 插件路线与设备到手前验证项见
+> [M4X-PLUGIN-INTEGRATION.md](./M4X-PLUGIN-INTEGRATION.md)。
 
 ## 结论
 
@@ -136,9 +141,9 @@ Pet 是 `outputs/` 的一个渲染目标：它把 Island 状态显示成角色�
 
 第 2–4 步都不得把 Pet 或设备故障接入 Router 的同步数据路径。
 
-## 本轮确认项
+## 已确认项
 
-- [ ] 认可三个功能 Module 的名字：`router`、`gateway`、`island`。
-- [ ] 认可 Pet 是 Island 的输出，不创建独立 `src/pet/` 顶层目录。
-- [ ] 认可 `app/control` / `app/cli` 是共用编排与入口，而非第四项功能。
-- [ ] 确认将当前重命名、目录整理和本文档一起提交并推送；不包含 Island 新行为或设备实现。
+- [x] 三个功能 Module 的名字：`router`、`gateway`、`island`。
+- [x] Pet 是 Island 的输出，不创建独立 `src/pet/` 顶层目录。
+- [x] `app/control` / `app/cli` 是共用编排与入口，而非第四项功能。
+- [x] 当前重命名、目录整理和本文档已提交并推送；不包含 Island 新行为或设备实现。

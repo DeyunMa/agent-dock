@@ -1,6 +1,8 @@
 node_modules/
 dist/
 .serena/
+# Local upstream source reference; not part of Agent Dock's published source.
+references/codeisland/
 *.tgz
 .DS_Store
 coverage/

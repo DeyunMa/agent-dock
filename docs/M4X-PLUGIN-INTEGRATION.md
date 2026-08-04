@@ -17,9 +17,9 @@ CrossPoint 插件版系统（含 M4X Runtime）
   └─ 未来：agent-dock-island.m4x
 ```
 
-因此，第一版 Island 的设备侧首选形态是一个 **M4X 插件应用**，不是重新做一套只有宠物的 M4
-固件。阅读、微信读书、番茄小说和 Island 是 CrossPoint 系统内并列的应用；打开 Island 时它充当
-桌面摆件，退出后仍可继续阅读。
+因此，第一版 Island 的设备侧首选形态是一个 **M4X 插件应用**，不是重新做一套 M4 固件。阅读、
+微信读书、番茄小说和 Island 是 CrossPoint 系统内并列的应用；打开 Island 时它显示桌面状态，退出后
+仍可继续阅读。
 
 ## 本地证据与已确认事实
 
@@ -61,12 +61,11 @@ agent-dock-island.m4x
   ├─ main.lua             # init / draw / input 生命周期
   ├─ pairing.lua          # 设备配对与 Token 的 appdata 存储
   ├─ transport.lua        # Wi-Fi 拉取已脱敏的状态快照
-  └─ renderer.lua         # 静态宠物帧与刷新冷却
+  └─ renderer.lua         # 静态 Island 画面与刷新冷却
 ```
 
 Mac 端同时扩展现有 `src/island/` Module。Island Core 继续把 Codex Hook、Router Decision Feed 等输入
-归约为一个 `IslandSnapshot`；M4X 插件只是其一个 Output Adapter 的设备侧实现，而不是新的顶层产品
-Module。
+归约为一个 `IslandSnapshot`；M4X 插件是 M4 连接的设备侧 Implementation，而不是新的顶层产品 Module。
 
 ## 推荐的通信模型：Wi-Fi 拉取
 
@@ -91,16 +90,15 @@ M4X Island 插件（前台）
   transcript、cwd 或密钥。
 
 BLE 不是第一版依赖：样本展示的是 Wi-Fi 访问能力，而非 BLE 插件 Interface。未来若实机发现原生
-BLE Adapter 且它能提供更好的离线配网或直连体验，可作为第二个 Adapter；Island Core 的 Interface
-无需改变。
+BLE 能力且它能提供更好的离线配网或直连体验，再单独评估；当前不为它预留实现层。
 
 ## Island Module 的接口取舍
 
-Island 保持一个深 Module：调用者只产生事件或读取状态，复杂的去重、优先级、冷却和设备细节留在
+Island 保持一个深 Module：调用者只产生事件或读取状态，复杂的去重、优先级、冷却和 M4 细节留在
 Implementation 内。
 
 ```ts
-accept(event: IslandEvent): Promise<void>;
+accept(event: IslandEvent): IslandSnapshot;
 snapshot(): IslandSnapshot;
 ```
 
@@ -108,14 +106,14 @@ M4X 路线新增的 **Seam** 位于 `IslandSnapshot` 与设备展示之间：
 
 ```text
 Island Core
-  → M4X Wi-Fi Output Adapter
+  → M4X Wi-Fi 连接
   → 设备专属、拉取式 DeviceSnapshot
   → agent-dock-island.m4x
 ```
 
-这个 Adapter 负责配对、Token 校验、设备离线、轮询、缓存和过期处理；Router、Gateway、Codex Hook 和
-其他输出都不需要知道 M4 的插件格式或网络细节。这种 Interface 能让未来的 Mac Pet、M4X 插件和其他
-设备共享同一 Island 状态机，并保持 Locality。
+这条连接负责配对、Token 校验、设备离线、轮询、缓存和过期处理；Router、Gateway 和 Codex Hook 都不需要
+知道 M4 的插件格式或网络细节。Island 的小 Interface 保持 M4 专用实现的 Locality，也不引入本地宠物或
+其他假设中的设备目标。
 
 ## 已知限制与到手后验证清单
 
@@ -140,5 +138,5 @@ Island Core
 - 已确认 M4X Runtime 的版本、前台生命周期和 Wi-Fi 行为；
 - 用户明确同意对设备进行升级或刷机。
 
-在此之前，Agent Dock 只保留文档与与设备无关的 Island 设计；不向设备写入文件、不调用刷机工具，也不把
-任何设备故障接入 Router 的同步数据路径。
+在此之前，Agent Dock 只保留已实现的 Island Core 与 M4 连接设计；不向设备写入文件、不调用刷机工具，
+也不把任何设备故障接入 Router 的同步数据路径。

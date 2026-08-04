@@ -59,8 +59,8 @@ function detailsFrom(event: IslandEvent, previous?: SnapshotDetails): SnapshotDe
 /**
  * Holds the temporal behavior behind Island Core's small Interface: duplicate
  * signals cannot replay animations, working gets a minimum visible duration,
- * and transient routing / settling states return to idle without a device
- * Adapter needing its own timing logic.
+ * and transient routing / settling states return to idle without the M4 link
+ * needing its own timing logic.
  */
 export class IslandStateScheduler {
   private current: ScheduledState;

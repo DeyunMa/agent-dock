@@ -1,6 +1,6 @@
 # Agent Dock
 
-一个供个人本机使用的 Agent Dock。当前实现包含 Codex 透明路由器、OpenCodex Gateway 管理和 Island（中转岛）事件流；后续可由 Island 接入 Mac 宠物与墨水屏输出。正常使用方式不变：
+一个供个人本机使用的 Agent Dock。当前实现包含 Codex 透明路由器、OpenCodex Gateway 管理和 Island（中转岛）事件流；后续由 Island 将脱敏状态连接到 M4 墨水屏。正常使用方式不变：
 
 - Desktop：照常点击 ChatGPT / Codex 图标。
 - CLI：照常输入 `codex`。
@@ -43,9 +43,9 @@ Router 不修改原始 prompt，不改变权限、sandbox 或工具配置；embe
 详细设计见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 四档下一版策略见 [docs/ROUTING-STRATEGY.md](docs/ROUTING-STRATEGY.md)（仅提案，未改变当前行为）。
 回滚方式见 [docs/ROLLBACK.md](docs/ROLLBACK.md)。
-当前结构、三个功能 Module 与 Island 后续演进见 [docs/MODULE-PLAN.md](docs/MODULE-PLAN.md)（目录已落地；不包含新的 Island / Pet 行为）。
-Hook 如何驱动 Island、如何避免宠物高频动作，以及 CodeIsland 可借鉴的边界见
-[docs/ISLAND-IMPLEMENTATION.md](docs/ISLAND-IMPLEMENTATION.md)（设计文档，尚未实现）。
+当前结构、三个功能 Module 与 Island 后续演进见 [docs/MODULE-PLAN.md](docs/MODULE-PLAN.md)（Island Core 已落地；M4 实机连接尚未实现）。
+Hook 如何驱动 Island、如何合并高频事件并为 M4 生成稳定状态，以及 CodeIsland 可借鉴的边界见
+[docs/ISLAND-IMPLEMENTATION.md](docs/ISLAND-IMPLEMENTATION.md)（Hook Input 和 M4 设备连接尚未实现）。
 M4X 插件版系统的调研、两阶段设备路线与实机到手前的停止点见
 [docs/M4X-PLUGIN-INTEGRATION.md](docs/M4X-PLUGIN-INTEGRATION.md)。
 
@@ -139,7 +139,7 @@ src/
 │   ├── core/                       # 分类、硬控制、配置、档位映射、审计和热加载
 │   └── adapters/                   # App Server、stdio/WS、CLI 与 Codex 进程 Adapter
 ├── gateway/                        # OpenCodex Gateway Interface 与 Adapter
-├── island/                         # 中转岛：当前为只读 Decision Feed，后续承接宠物/设备输出
+├── island/                         # 中转岛：状态 Core；后续只连接 M4 墨水屏
 ├── app/                            # 共用 composition / 入口层，不是产品功能 Module
 │   ├── control/                    # 本地 Control Interface、配置写入与编排
 │   └── cli/                        # doctor、CLI 分流与 control-server 命令
@@ -170,7 +170,7 @@ test/
 ```
 
 面向产品能力的顶层 Module 只有三个：`router/`、`gateway/`、`island/`。`app/` 与 `index.ts`
-是共用编排与入口，不是第四项产品能力；Pet 未来是 `island/` 内的一种输出，而非新的顶层 Module。
+是共用编排与入口，不是第四项产品能力；Island 只负责 M4 连接，不创建或控制本地 Mac / Codex 宠物。
 
 ## 已知边界
 

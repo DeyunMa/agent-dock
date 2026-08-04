@@ -17,7 +17,7 @@ export interface IslandTransition {
 /**
  * Purely maps meaningful lifecycle observations to the single display state.
  * It deliberately ignores low-priority route changes while work or approval is
- * visible, so a busy pet cannot flicker back into a routing animation.
+ * visible, so a busy M4 display cannot flicker back into a routing state.
  */
 export function reduceIslandEvent(
   current: IslandState,

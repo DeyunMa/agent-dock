@@ -126,7 +126,7 @@ params.collaborationMode.settings.reasoning_effort
 
 ## Island 与 Control Module
 
-Router Adapter 在本轮决策产生后立即异步写入 `src/island/` 持有的目录型 Decision Feed；菜单栏 App 通过 `GET /v1/decisions?after=...` 增量读取并显示原生 HUD，不等待 Codex 回答。Island 当前只提供这个只读事件中转；未来的宠物状态机与设备输出也只能异步消费它。
+Router Adapter 在本轮决策产生后立即异步写入 `src/island/` 持有的目录型 Decision Feed；菜单栏 App 通过 `GET /v1/decisions?after=...` 增量读取并显示原生 HUD，不等待 Codex 回答。Island 另有已实现、尚未接入常驻运行时的状态 Core 与 Decision Feed Input；未来仅由 M4 连接异步消费其状态快照。
 
 Control Module 是配置写入与本机 HTTP 编排入口；Gateway Module 自己封装 OpenCodex 生命周期：
 

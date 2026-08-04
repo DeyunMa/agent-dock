@@ -69,9 +69,9 @@ function isWorkSignal(event: IslandEvent): boolean {
 }
 
 /**
- * Island Core's public Module. It is intentionally device-agnostic: callers
- * submit a safe event or ask for the latest stable snapshot. Timing, ordering,
- * and duplicate suppression remain inside the Implementation.
+ * Island Core's public Module. Callers submit a safe event or ask for the
+ * latest M4-display-safe snapshot. Timing, ordering, and duplicate suppression
+ * remain inside the Implementation.
  */
 export class IslandEngine {
   private readonly clock: IslandClock;

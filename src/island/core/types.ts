@@ -48,8 +48,8 @@ export interface IslandEvent {
 }
 
 /**
- * The stable, display-safe output from Island Core. Output Adapters may render
- * this snapshot but must not use it to influence Router or Codex behavior.
+ * The stable, M4-display-safe output from Island Core. The M4 connection may
+ * render this snapshot but must not use it to influence Router or Codex behavior.
  */
 export interface IslandSnapshot {
   schemaVersion: 1;

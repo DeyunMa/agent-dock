@@ -68,7 +68,7 @@ enum MenuBarIcon {
             return true
         }
         image.isTemplate = true
-        image.accessibilityDescription = "Agent Dock pet"
+        image.accessibilityDescription = "Agent Dock menu bar icon"
         return image
     }
 }

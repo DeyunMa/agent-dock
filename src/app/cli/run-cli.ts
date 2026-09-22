@@ -56,12 +56,12 @@ export async function runCli(args: string[], engine: RoutingEngine): Promise<num
   }
 
   if (command === "exec" || command === "e") {
+    if (args.includes("resume")) return spawnInherited(realCodex, args);
     const prompt = extractExecPrompt(args);
     if (!prompt) return spawnInherited(realCodex, args);
     const triggeredAt = new Date().toISOString();
     const decision = await engine.routeTurn(
       {
-        threadId: "cli-exec",
         input: [{ type: "text", text: prompt }],
         cwd: process.cwd(),
       },

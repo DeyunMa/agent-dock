@@ -12,7 +12,7 @@ import { homedir } from "node:os";
 import { basename, dirname, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { defaultConfig, loadConfig } from "../../../src/router/core/config.js";
+import { defaultConfig, loadConfig } from "./legacy-router/config.js";
 import {
   deterministicComplexity,
   scoringText,
@@ -24,7 +24,7 @@ import type {
   RouteName,
   RouterConfig,
   SemanticCategory,
-} from "../../../src/router/core/types.js";
+} from "./legacy-router/types.js";
 import {
   classifyWithRules,
   loadRules,

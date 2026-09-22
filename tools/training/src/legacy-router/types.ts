@@ -27,13 +27,14 @@ export interface RouteProfile {
   fast: boolean;
 }
 
-export interface JevClassifierConfig {
+export interface EmbeddingClassifierConfig {
   enabled: boolean;
   baseUrl: string;
   model: string;
-  apiKeyFile: string;
+  modelDigest: string;
+  modelDirectory: string;
   timeoutMs: number;
-  maxChars: number;
+  keepAlive: string;
 }
 
 export interface RoutingControlConfig {
@@ -44,9 +45,11 @@ export interface RoutingControlConfig {
 }
 
 export interface RoutingConfig {
-  stateDirectory: string;
+  stickyTurns: boolean;
   respectCliModelFlag: boolean;
   controls: RoutingControlConfig;
+  categoryRoutes: Record<SemanticCategory, RouteName>;
+  complexityRoutes: Record<Complexity, RouteName | "inherit">;
   routeOrder: RouteName[];
 }
 
@@ -72,7 +75,7 @@ export interface GatewayConfig {
 export interface RouterConfig {
   version: number;
   enabled: boolean;
-  classifier: JevClassifierConfig;
+  classifier: EmbeddingClassifierConfig;
   routing: RoutingConfig;
   routes: Record<RouteName, RouteProfile>;
   gateway: GatewayConfig;
@@ -81,7 +84,6 @@ export interface RouterConfig {
 }
 
 export interface AiDecision {
-  routeName: string;
   category: SemanticCategory;
   complexity: Complexity;
   intent: ExecutionIntent;

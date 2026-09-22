@@ -33,20 +33,20 @@ if (process.argv.includes("app-server")) {
           result: {
             data: [
               {
-                id: "gpt-5.6-luna",
+                id: "gpt-5.6-terra",
                 supportedReasoningEfforts: [{ reasoningEffort: "low" }],
                 serviceTiers: [{ id: "priority" }],
               },
               {
-                id: "gpt-5.6-terra",
+                id: "gpt-5.6-sol",
                 supportedReasoningEfforts: [
                   { reasoningEffort: "medium" },
-                  { reasoningEffort: "max" },
+                  { reasoningEffort: "high" },
                 ],
                 serviceTiers: [{ id: "priority" }],
               },
               {
-                id: "gpt-5.6-sol",
+                id: "gpt-6-astra",
                 supportedReasoningEfforts: [
                   { reasoningEffort: "high" },
                   { reasoningEffort: "xhigh" },
@@ -98,7 +98,7 @@ socket.on("message", (data) => {
         params: {
           threadId: "fake-thread",
           input: [{ type: "text", text: "请解释什么是幂等性" }],
-          model: "original",
+          model: "jev-router",
           effort: "medium",
           serviceTier: null,
         },

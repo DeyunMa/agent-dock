@@ -9,8 +9,8 @@ app_dir="$package_dir/.build/agent-dock-app/Agent Dock.app"
 contents_dir="$app_dir/Contents"
 
 "$project_dir/scripts/macos/build-icon.sh"
-swift build --configuration release --package-path "$package_dir"
-bin_dir="$(swift build --configuration release --package-path "$package_dir" --show-bin-path)"
+zsh "$project_dir/scripts/macos/swift-build.sh" --configuration release
+bin_dir="$(zsh "$project_dir/scripts/macos/swift-build.sh" --configuration release --show-bin-path)"
 
 mkdir -p "$contents_dir/MacOS" "$contents_dir/Resources"
 cp "$bin_dir/AgentDockBar" "$contents_dir/MacOS/AgentDockBar"

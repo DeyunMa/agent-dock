@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { defaultConfig } from "../../src/router/core/config.js";
 import {
   RouterEngine,
@@ -41,6 +44,7 @@ class CountingAi extends FakeAi {
 function config() {
   const value = defaultConfig();
   value.logging.auditFile = "";
+  value.routing.stateDirectory = mkdtempSync(join(tmpdir(), "dock-engine-"));
   return value;
 }
 
@@ -52,12 +56,13 @@ function prediction(
     complexity: "normal",
     intent: "do",
     confidence: 0.9,
-    reason: "test_embedding",
+    reason: "test_jev",
+    routeName: overrides.category === "DIAGNOSE_FIX" || overrides.category === "PLAN_DESIGN" || overrides.category === "AGENT_WORKFLOW" ? "deep" : "balanced",
     ...overrides,
   };
 }
 
-test("embedding output is the primary semantic decision", async () => {
+test("Jev directly selects the three-tier route", async () => {
   const ai = new CountingAi(
     prediction({
       category: "AGENT_WORKFLOW",
@@ -71,10 +76,10 @@ test("embedding output is the primary semantic decision", async () => {
   assert.equal(ai.calls, 1);
   assert.equal(decision.category, "AGENT_WORKFLOW");
   assert.equal(decision.complexity, "extreme");
-  assert.equal(decision.routeName, "max");
+  assert.equal(decision.routeName, "deep");
   assert.equal(decision.intent, "do");
   assert.equal(decision.intentSource, "classifier");
-  assert.equal(decision.reason, "embedding_primary");
+  assert.equal(decision.reason, "jev_first_turn");
 });
 
 test("intent stays observational and cannot change the route", async () => {
@@ -140,7 +145,7 @@ test("bypass, manual override and hard guards never call the classifier", async 
   assert.equal(guardAi.calls, 0);
 });
 
-test("classifier PASS_CONTEXT and fail-open continuation preserve sticky route", async () => {
+test("all subsequent turns reuse the pinned route without classification", async () => {
   const decisions: Array<Omit<AiDecision, "latencyMs"> | undefined> = [
     prediction({
       category: "DIAGNOSE_FIX",
@@ -179,13 +184,13 @@ test("classifier PASS_CONTEXT and fail-open continuation preserve sticky route",
         input: [{ type: "text", text: "继续" }],
       })
     ).reason,
-    "sticky_context",
+    "first_turn_pinned",
   );
   const failOpenContinuation = await engine.routeTurn({
     threadId: "sticky",
     input: [{ type: "text", text: "继续做" }],
   });
-  assert.equal(failOpenContinuation.reason, "sticky_context");
+  assert.equal(failOpenContinuation.reason, "first_turn_pinned");
   assert.equal(failOpenContinuation.intent, "continue");
 });
 
@@ -203,7 +208,7 @@ test("manual controls remain deterministic and classifier-free", async () => {
     threadId: "manual",
     input: [{ type: "text", text: "拉满！" }],
   });
-  assert.equal(max.routeName, "max");
+  assert.equal(max.routeName, "deep");
 
   const automatic = await engine.routeTurn({
     threadId: "manual",
@@ -217,11 +222,11 @@ test("manual controls remain deterministic and classifier-free", async () => {
 test("manual step-up infers the current route after a Router restart", async () => {
   const decision = await new RouterEngine(config(), new FakeAi()).routeTurn({
     threadId: "resumed-thread",
-    model: "gpt-5.6-sol",
+    model: "gpt-6-astra",
     effort: "high",
     input: [{ type: "text", text: "加强一点" }],
   });
-  assert.equal(decision.routeName, "max");
+  assert.equal(decision.routeName, "deep");
   assert.equal(decision.profile?.effort, "xhigh");
 });
 
@@ -257,14 +262,14 @@ test("protocol changes only routing fields and collaboration settings", async ()
     params: {
       threadId: "t3",
       input: [{ type: "text", text: "安装这个CLI，然后执行初始化并确认版本" }],
-      model: "original-model",
+      model: "jev-router",
       effort: "low",
       serviceTier: "priority",
       cwd: "/tmp/project",
       collaborationMode: {
         mode: "plan",
         settings: {
-          model: "original-model",
+          model: "jev-router",
           reasoning_effort: "low",
           developer_instructions: "preserve me",
         },
@@ -275,12 +280,12 @@ test("protocol changes only routing fields and collaboration settings", async ()
   const transformed = JSON.parse(await protocol.transformClientLine(JSON.stringify(message)));
   assert.deepEqual(message, original);
   assert.deepEqual(transformed.params.input, original.params.input);
-  assert.equal(transformed.params.model, "gpt-5.6-terra");
-  assert.equal(transformed.params.effort, "max");
+  assert.equal(transformed.params.model, "gpt-5.6-sol");
+  assert.equal(transformed.params.effort, "high");
   assert.equal(transformed.params.serviceTier, null);
   assert.equal(transformed.params.collaborationMode.mode, "plan");
-  assert.equal(transformed.params.collaborationMode.settings.model, "gpt-5.6-terra");
-  assert.equal(transformed.params.collaborationMode.settings.reasoning_effort, "max");
+  assert.equal(transformed.params.collaborationMode.settings.model, "gpt-5.6-sol");
+  assert.equal(transformed.params.collaborationMode.settings.reasoning_effort, "high");
   assert.equal(
     transformed.params.collaborationMode.settings.developer_instructions,
     "preserve me",
@@ -308,13 +313,13 @@ test("presentation failure cannot block the current routing decision", async () 
         params: {
           threadId: "presentation-fail-open",
           input: [{ type: "text", text: "修改这个功能" }],
-          model: "original-model",
+          model: "jev-router",
           effort: "low",
         },
       }),
     ),
   );
-  assert.equal(transformed.params.model, "gpt-5.6-terra");
+  assert.equal(transformed.params.model, "gpt-5.6-sol");
   assert.equal(presentationCalls, 1);
 });
 
@@ -362,7 +367,7 @@ test("a first turn waits briefly for an already requested model catalog", async 
     JSON.stringify({
       id: 31,
       method: "turn/start",
-      params: { threadId: "catalog-first-turn", input: [{ type: "text", text: "检查" }] },
+      params: { threadId: "catalog-first-turn", model: "jev-router", input: [{ type: "text", text: "检查" }] },
     }),
   );
   setTimeout(() => {
@@ -372,7 +377,7 @@ test("a first turn waits briefly for an already requested model catalog", async 
         result: {
           data: [
             {
-              id: "gpt-5.6-luna",
+              id: "gpt-5.6-terra",
               supportedReasoningEfforts: [{ reasoningEffort: "low" }],
               serviceTiers: [{ id: "priority" }],
             },

@@ -18,7 +18,7 @@
 | `src/router/core/` | Router 的分类、硬控制、模型档位、审计和热加载 Implementation |
 | `src/router/adapters/` | Router 的 Codex App Server、stdio/WebSocket、CLI 与进程 Adapter |
 | `src/gateway/` | OpenCodex Gateway Interface、探测、生命周期与模型目录 Adapter |
-| `resources/router/classifier-v1/` | 随版本发布、可直接安装的三个线性分类头及 manifest |
+| `src/router/core/jev-classifier.ts`、`thread-routes.ts` | Jev API 分类和按对话持久化首轮路由 |
 | `tools/training/` | 私有数据准备、训练、历史规则基线和模型验证；`work/` 不属于运行时或发布资源 |
 | `src/island/` | Island（中转岛）的只读决策事件流；不得阻塞或改变 Router 数据面 |
 | `src/app/control/` | 本机 Control Interface、原子配置写入与 Module 编排 |
@@ -31,7 +31,7 @@
 - 保持透明代理：不得改写原始 prompt、权限、sandbox 或工具配置；协议修改只限架构文档声明的路由字段。
 - `intent` 只用于本地展示和审计，不得影响档位、授权或模型上下文。
 - 规则、分类器、审计、事件展示和热加载失败时必须 fail-open；Control Module 离线不得影响 Router 数据面。
-- Router 只决定 `model`、`effort` 和 `serviceTier`；供应商、API Key、协议转换及同模型端点容灾属于 Gateway。
+- Router 只决定 `model`、`effort` 和 `serviceTier`；生成模型供应商、API Key、协议转换及同模型端点容灾属于 Gateway；Jev 决策 API 使用 Router 专用凭据文件。
 - 保持修改最小且聚焦，不回退或覆盖用户的无关改动；不要仅因目录审美进行搬迁。
 
 ## 文件与运行边界
@@ -39,7 +39,8 @@
 - 不直接编辑 `dist/`、SwiftPM `.build/`、已安装的 App bundle 或 `~/.agent-dock/` 下的运行数据；修改源码或生成脚本后重新构建。
 - `.serena/` 是本地分析工具元数据，不属于项目源码，不得纳入提交。
 - 不提交凭据、API Key、会话正文、prompt 明文或其他本机敏感数据。
-- `tools/training/work/` 始终保持 Git ignored；只允许把明确通过验证的三个线性头提升到 `resources/router/classifier-v1/`，提升时同步 manifest、README、架构合同和 bundle 回归测试。
+- `tools/training/` 是已退役的离线实验档案，生产不依赖它。`work/` 始终保持 Git ignored；不删除训练资料或将其恢复为运行时 fallback。
+- 自动路由仅首次有效请求；持久化 profile，重启和配置热加载不能自动换档。密钥及 prompt 不进入状态文件、日志或提交。
 
 ## 验证
 

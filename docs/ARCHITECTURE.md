@@ -1,118 +1,48 @@
 # Architecture
 
-当前实现版本：`1.3.0`。
+当前实现版本：`1.4.0`，配置 schema v3。
 
 ## 设计原则
 
-- Transparent Proxy：用户入口、task、历史、prompt、权限和工具行为保持不变。
-- Embedding Primary：正常请求的语义只由 embedding + 本地线性头判断，不再由生成式 2B 模型或加权规则主导。
-- Hard Controls Only：程序化逻辑只处理不可学习的不变量，不参与普通请求的语义分类。
-- Fail Open：分类器、模型产物、配置、日志和展示失败都不能阻断 Codex。
-- Per Turn：长对话中的每个 `turn/start` 都可得到不同参数。
-- Local Only：embedding 请求只发送到 loopback Ollama，无需额外 API key。
+- Transparent Proxy：不改用户 prompt、权限、sandbox 或工具配置，只改路由字段。
+- First Turn Only：每段对话仅首次有效用户请求自动选档，随后持久化沿用。
+- Three Tiers：quick（Terra/low/Fast）、balanced（Sol/high）、deep（Astra/xhigh）。
+- Jev API：只向官方 HTTPS endpoint 发送首次输入、候选模型配置及职责描述。
+- Virtual Model：在 App Server `model/list` 响应中注册 `jev-router`（显示名 `Jev Router`）。它只表示用户选择自动模式，不是可调用的生成模型。
+- Fail Open：分类器、状态存储、配置与观察系统异常不能阻断 Codex。
+- Gateway 仍管理生成模型的供应商和认证；Jev 决策 API 凭据由 Router 专用凭据文件负责。
 
-```mermaid
-flowchart LR
-  U["用户正常使用"] --> D["Desktop Adapter<br/>stdio"]
-  U --> C["CLI Adapter<br/>temporary WebSocket"]
-  D --> P["Protocol Router"]
-  C --> P
-  P --> E["RouterEngine"]
-  E --> H["Hard Controls<br/>开关 手动档 明确禁用 协议直通"]
-  E --> Q["qwen3-embedding:0.6b<br/>loopback Ollama"]
-  Q --> L["三个本地线性头<br/>intent category complexity"]
-  L --> M["TOML Route Mapping"]
-  D -. "surface=desktop" .-> V["Decision Feed"]
-  C -. "surface=terminal" .-> V
-  V --> HUD["菜单栏 App 原生 HUD"]
-  P --> A["真实 Codex App Server"]
-  A --> N["Native OpenAI"]
-  A -. "显式启用" .-> G["OpenCodex Gateway<br/>第三方模型 Adapter"]
-  UI["Swift 菜单栏"] --> CTL["Control Module<br/>loopback HTTP"]
-  CTL --> T["原子 TOML 配置"]
-  CTL --> G
-  T -. "下一 turn 热加载" .-> E
-```
+## 决策流程
 
-## Router Core
+1. Router disabled / CLI 显式模型直通；完整消息手动控制优先处理。
+2. 内部协议上下文、空输入与明确禁用使用硬护栏。
+3. 读取 `thread-routes/<sha256(threadId)>.json`；存在则直接复用实际 profile，不调用 Jev。
+4. 恢复或派生已有历史的对话，无本地记录时保留当前 profile，不补做自动选档。
+5. 原子 hard-link 占位（已完整写入的 inode）确保多进程只允许一次首轮调用；其他进程有界等待结果。同 task 在进程内串行，不同 task 独立。
+6. Jev 一次返回两个 Choice：route（三档）、intent（只观察）。明确描述每档任务职责，模型名不作为推测能力的依据。输入是待分类数据，不能覆盖分类规则。
+7. 用户选择真实模型时请求原样直通；选择 `jev-router` 时，协议 Adapter 在转发前替换为已固定或新选出的真实 profile，并在返回给 UI 时恢复虚拟显示名。
+8. 验证 schema、合法选项、概率范围及分布、模型目录后持久化实际模型/effort/Fast，再修改协议字段。
+9. 请求默认 2500ms 超时，不重试；首轮失败持久化当前 profile 或直通标记，后续不再次请求。不按未经校准的 confidence 阈值猜测升级。
 
-`RouterEngine` 对协议层只暴露一个主要接口：
+## 状态与隐私
 
-```ts
-routeTurn(params: TurnStartParams): Promise<RouteDecision>
-```
+状态不含 prompt 或密钥。目录 0700、文件 0600，task ID 哈希为文件名，写入原子替换。记录没有 LRU 淘汰，避免旧 task 再被当作首轮；随 task 保留。遗留 pending 占位有界等待后直通，不自动重新申请；用户可明确“恢复自动”重置。
 
-内部顺序固定为：
+Jev key 从 `TYPESAFE_API_KEY` 或 owner-only `classifier.api_key_file` 读取，每次首轮读取以支持轮换。重定向拒绝，endpoint 固定为 `https://api.typesafe.ai`，错误不记录响应正文、密钥或用户文本。环境 key 不传给 Codex 子进程。
 
-1. Router disabled、CLI 显式模型或其他 transport bypass：原样直通。
-2. 完整消息命中“升一档 / 拉满 / 恢复自动”：确定性执行，不调用分类器。
-3. 明确关闭路由、空请求或内部协议上下文：原样直通。
-4. `EmbeddingClassifier` 调用 loopback `/api/embed`，获得 1,024 维向量。
-5. 三个 multinomial logistic-regression 线性头分别预测 `intent / category / complexity`。
-6. `category Route` 与 `complexity Route` 取 `route_order` 中较强者。
-7. 模型目录校验通过后，仅修改 Codex 路由字段。
+最多发送默认 12,000 字符；长输入保留首尾。原始转发输入不截断。之后的用户消息不会再发送 Jev。后续 HUD 的 intent 只能显示显式续话或 unknown，不能伪装为再次分类的结果。
 
-没有 confidence fallback。验证集上 embedding 在每个 confidence 区间都优于旧规则；低置信度退回旧规则会降低整体准确率。分类器失败时也不执行语义猜测，而是直接 fail-open。
+## 手动控制与热加载
 
-`RouteDecision.intent` 是独立的观测字段：`ask / do / continue / control / unknown`。它不会进入档位计算，也不会写入 prompt、additional context 或任何 agent-visible 字段；CLI、菜单栏和本地审计只展示 `[intent] [route]`。
+“加强一点”和“拉满”是用户显式改变档位的例外；“恢复自动”删除当前记录，允许下一有效请求重新选档。档位修改只影响新 task，现有 task 保存完整 profile，不跟随同名配置变化。Router 开关即时生效。
 
-## EmbeddingClassifier 深模块
-
-`EmbeddingClassifier` 隐藏以下细节，`RouterEngine` 只依赖 `AiClassifier` 的 `warmup / classify` 两个方法：
-
-- Ollama `/api/embed` 请求、loopback 限制、超时和保活；
-- `collapse_whitespace_then_tail_v1` 预处理；
-- embedding L2 normalization；
-- 三个 JSON 线性头的 schema、类别顺序、维度、模型 digest 一致性校验；
-- logits、softmax、类别和置信度计算；
-- 冷启动期间的有界等待与 fail-open。
-
-三个已验证线性头随 Router 版本发布：
-
-```text
-resources/router/classifier-v1/
-├── manifest.json
-├── intent.json
-├── category.json
-└── complexity.json
-```
-
-安装脚本将它们原子复制到：
-
-```text
-~/.agent-dock/classifier-v1/
-├── intent.json
-├── category.json
-└── complexity.json
-```
-
-运行时文件权限为 owner-only。训练输入、embedding cache、验证预测、候选模型和报告继续留在 Git ignored 的 `tools/training/work/`；只有经过验证并明确发布的三个线性头进入 `resources/router/classifier-v1/`。
-
-## Sticky 与硬控制
-
-Sticky state 只保存每个 task 最近一次实际应用的 `category / complexity / routeName`，最多 256 个 task：
-
-- 分类器返回 `PASS_CONTEXT` 时，可沿用当前 task 的 Route；
-- 分类器超时或冷启动时，只有精确的续话短语可沿用已有 Route；
-- 明确“不要路由”不会使用 sticky；
-- “恢复自动”清除当前 task 的 sticky state。
-
-这些行为是会话连续性和用户控制，不是普通请求的语义分类。
-
-## 热加载
-
-`ReloadingRouterEngine` 在每个 turn 前只比较：
-
-- `router.toml` metadata；
-- `intent.json / category.json / complexity.json` metadata。
-
-未变化时不解析 TOML、不读取模型、不访问 Gateway、不做网络健康检查。变化时先完整解析和校验，再原子替换 `RouterEngine`；`RouterSessionState` 独立持有，因此热加载不会丢失 task 连续性。分类器配置或模型产物变化时才创建并预热新的 classifier。
+`ReloadingRouterEngine` 只检查 TOML metadata；classifier 或 routes 改变时重建 JevClassifier。warmup 是无网络的空操作。已退役线性头移至 `tools/training/resources/classifier-v1/`，历史训练工具使用独立的 v2 合同，生产不导入它们。
 
 ## Transport 与协议不变量
 
-Desktop 和 CLI Adapter 都把来源显式标记为 `desktop / terminal / management`，不通过进程列表猜测前台应用。同一 `threadId` 的消息保持顺序，不同 task 不会被一个慢 embedding 请求串行阻塞。
+Desktop 和 CLI Adapter 都把来源显式标记为 `desktop / terminal / management`，不通过进程列表猜测前台应用。同一 `threadId` 的消息保持顺序，不同 task 不会被一个慢 Jev 请求串行阻塞。
 
-仅处理 `method === "turn/start"`，除以下字段外保持消息不变：
+数据面路由只改 `turn/start` 的以下字段：
 
 ```text
 params.model
@@ -122,7 +52,7 @@ params.collaborationMode.settings.model
 params.collaborationMode.settings.reasoning_effort
 ```
 
-`params.input` 不做删除、拼接、重写或注入。其他 JSON-RPC 请求和服务端响应原样转发。
+`params.input` 不做删除、拼接、重写或注入。控制面另外拦截 `model/list`、线程启动/恢复响应以及 model 配置读写，用于显示虚拟模型并持久化自动／手动模式；虚拟 ID 必须在真实 App Server 边界前还原。
 
 ## Island 与 Control Module
 
@@ -146,14 +76,14 @@ POST /v1/gateway/dashboard
 
 - Desktop：随 Codex App Server 子进程启动/退出。
 - CLI：每个交互会话启动一个 Router、一个临时 loopback WebSocket 和一个 Codex App Server。
-- Embedding：Router 启动时后台预热；首轮最多等待 25ms，真实冷加载仍原样直通。
+- Jev：启动不发请求、不计费；只有首轮发送一次请求，默认 2.5 秒超时，无重试。
 - 配置：Control Module 原子替换 TOML；下一次 turn 热加载。
 - Gateway：只有用户显式启用且 OpenCodex 健康时才切换。
 
-Router Core 对 embedding、线性头、审计、展示和热加载错误均 fail-open。OpenCodex 被启用后则是真正的数据面依赖，不能承诺其崩溃时当前会话无损切回。
+Router Core 对 Jev API、路由状态、审计、展示和热加载错误均 fail-open。OpenCodex 被启用后则是真正的数据面依赖，不能承诺其崩溃时当前会话无损切回。
 
 ## 审计日志
 
 `~/.agent-dock/events.jsonl` 是轻量决策索引，不是第二份会话记录。schema v3 只记录来源、`thread_id`、prompt hash、意图、实际 Route、Fast、原因、分类器状态和耗时。
 
-Prompt 明文、cwd、实际 model/effort、回答和工具调用仍由 Codex 会话 JSONL 管理；category 与 complexity 不进入审计或模型上下文。1.3 新增可选的 `classifier_kind = "embedding_linear_heads"`，不改变历史事件的可读性，也不要求迁移旧 JSONL。
+Prompt 明文、cwd、实际 model/effort、回答和工具调用仍由 Codex 会话 JSONL 管理；category 与 complexity 不进入审计或模型上下文。1.4 使用 `classifier_kind = "jev_api"`，不改变历史事件的可读性，也不要求迁移旧 JSONL。

@@ -6,7 +6,7 @@ import {
   type Complexity,
   type ExecutionIntent,
   type SemanticCategory,
-} from "../../../src/router/core/types.js";
+} from "./legacy-router/types.js";
 
 export const SYNTHETIC_SCHEMA_VERSION = 1 as const;
 export const SYNTHETIC_MIN_REVIEW_CONFIDENCE = 0.8;

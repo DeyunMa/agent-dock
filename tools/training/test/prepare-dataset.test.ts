@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { defaultConfig } from "../../../src/router/core/config.js";
+import { defaultConfig } from "../src/legacy-router/config.js";
 import {
   detectLanguage,
   isGeneratedContext,

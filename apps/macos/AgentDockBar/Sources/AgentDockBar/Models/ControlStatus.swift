@@ -82,6 +82,14 @@ struct RouteSummary: Decodable, Identifiable {
     let fast: Bool
 
     var id: String { name }
+    var displayName: String {
+        switch name {
+        case "quick": "轻量"
+        case "balanced": "标准"
+        case "deep": "深入"
+        default: name
+        }
+    }
 }
 
 struct ActivationStatus: Decodable {

@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
-import { access } from "node:fs/promises";
 import { createInterface } from "node:readline";
-import { join } from "node:path";
+import { JevClassifier } from "../../router/core/jev-classifier.js";
 import { isExecutable } from "../../router/core/config.js";
 import type { RouterConfig } from "../../router/core/types.js";
 import { backendEnvironment } from "../../router/adapters/codex-process.js";
@@ -17,40 +16,9 @@ async function probeClassifier(config: RouterConfig): Promise<Check> {
   if (!config.classifier.enabled) {
     return { name: "classifier", ok: true, detail: "disabled by config" };
   }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 3000);
-  try {
-    const response = await fetch(`${config.classifier.baseUrl}/api/tags`, {
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      return { name: "classifier", ok: false, detail: `Ollama HTTP ${response.status}` };
-    }
-    const payload = (await response.json()) as { models?: Array<{ name?: string; model?: string }> };
-    const installed = (payload.models ?? []).find(
-      (model) =>
-        model.name === config.classifier.model ||
-        model.model === config.classifier.model,
-    ) as { name?: string; model?: string; digest?: string } | undefined;
-    const artifacts = ["intent.json", "category.json", "complexity.json"];
-    await Promise.all(
-      artifacts.map((name) => access(join(config.classifier.modelDirectory, name))),
-    );
-    const available =
-      installed !== undefined &&
-      installed.digest === config.classifier.modelDigest;
-    return {
-      name: "classifier",
-      ok: available,
-      detail: available
-        ? `${config.classifier.model} and three linear heads are ready`
-        : `${config.classifier.model} is missing or its digest does not match`,
-    };
-  } catch (error) {
-    return { name: "classifier", ok: false, detail: (error as Error).message };
-  } finally {
-    clearTimeout(timer);
-  }
+  const result = await new JevClassifier(config).classify("请简短解释什么是幂等性。这是一条诊断用的模拟首轮请求。");
+  return { name: "classifier", ok: result.status === "ok", detail: result.status === "ok" ? `${config.classifier.model}: ${result.decision?.routeName}, ${result.latencyMs}ms (synthetic API probe)` : `Jev ${result.status}` };
+
 }
 
 async function probeModels(binary: string): Promise<{ models: string[]; error?: string }> {

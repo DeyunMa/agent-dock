@@ -16,15 +16,15 @@ test("example config exposes category, model, effort and fast knobs", async () =
     "utf8",
   );
   const config = parseConfig(source);
-  assert.equal(config.routing.categoryRoutes.AGENT_WORKFLOW, "deep");
+  assert.deepEqual(config.routing.routeOrder, ["quick", "balanced", "deep"]);
   assert.deepEqual(config.routes.quick, {
-    model: "gpt-5.6-luna",
+    model: "gpt-5.6-terra",
     effort: "low",
     fast: true,
   });
   assert.deepEqual(config.routes.balanced, {
-    model: "gpt-5.6-terra",
-    effort: "max",
+    model: "gpt-5.6-sol",
+    effort: "high",
     fast: false,
   });
   assert.deepEqual(config.routing.controls, {
@@ -33,12 +33,12 @@ test("example config exposes category, model, effort and fast knobs", async () =
     auto: ["恢复自动", "自动路由"],
     fallbackRoute: "deep",
   });
-  assert.equal(config.version, 2);
-  assert.equal(config.classifier.model, "qwen3-embedding:0.6b");
-  assert.equal(config.classifier.timeoutMs, 1600);
+  assert.equal(config.version, 3);
+  assert.equal(config.classifier.model, "jev-latest");
+  assert.equal(config.classifier.timeoutMs, 2500);
 });
 
-test("v1 Ollama config migrates to v2 embedding classifier without changing routes", () => {
+test("legacy config migrates to Jev and three routes", () => {
   const migrated = migrateConfigSource(`version = 1
 enabled = false
 rules_file = "~/.agent-dock/router-rules.json"
@@ -57,21 +57,21 @@ effort = "low"
 fast = false
 `);
   const config = parseConfig(migrated);
-  assert.equal(config.version, 2);
+  assert.equal(config.version, 3);
   assert.equal(config.enabled, false);
-  assert.equal(config.classifier.model, "qwen3-embedding:0.6b");
-  assert.equal(config.classifier.keepAlive, "15m");
+  assert.equal(config.classifier.model, "jev-latest");
+  assert.match(config.classifier.apiKeyFile, /jev-api-key$/);
   assert.equal(config.routes.quick?.model, "custom/model");
   assert.doesNotMatch(migrated, /\[ollama\]|rules_file|qwen3\.5:2b/);
 });
 
 test("config rejects ambiguous route order and invalid route profiles", () => {
   assert.throws(
-    () => parseConfig('version = 1\n[routing]\nroute_order = ["quick", "quick"]\n'),
+    () => parseConfig('version = 3\n[routing]\nroute_order = ["quick", "quick"]\n'),
     /must not contain duplicate routes/,
   );
   assert.throws(
-    () => parseConfig('version = 1\n[routes.quick]\neffort = "high\\\" -c unsafe=true"\n'),
+    () => parseConfig('version = 3\n[routes.quick]\neffort = "high\\\" -c unsafe=true"\n'),
     /effort must be a simple value/,
   );
 });
@@ -79,7 +79,7 @@ test("config rejects ambiguous route order and invalid route profiles", () => {
 test("CLI invocation detection preserves explicit user routing", () => {
   assert.equal(topLevelCommand(["-C", "/tmp/repo", "resume", "--last"]), "resume");
   assert.equal(topLevelCommand(["explain this code"]), undefined);
-  assert.equal(hasExplicitRoutingArgument(["-m", "gpt-5.6-sol"]), true);
+  assert.equal(hasExplicitRoutingArgument(["-m", "gpt-6-astra"]), true);
   assert.equal(hasExplicitRoutingArgument(["-c", 'model_reasoning_effort="xhigh"']), true);
   assert.equal(hasExplicitRoutingArgument(["--search"]), false);
 });
@@ -88,11 +88,11 @@ test("exec prompt receives launch-time route flags", () => {
   const args = ["exec", "--json", "fix the bug"];
   assert.equal(extractExecPrompt(args), "fix the bug");
   assert.deepEqual(
-    injectExecRoute(args, { model: "gpt-5.6-luna", effort: "low", fast: true }),
+    injectExecRoute(args, { model: "gpt-5.6-terra", effort: "low", fast: true }),
     [
       "exec",
       "-m",
-      "gpt-5.6-luna",
+      "gpt-5.6-terra",
       "-c",
       'model_reasoning_effort="low"',
       "-c",

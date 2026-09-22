@@ -1,3 +1,7 @@
+> 历史工具读取归档 `resources/router-v2.toml`（可用 `AGENT_DOCK_TRAINING_CONFIG` 指定其他 v2 文件），不读取现役 v3 配置。
+
+> 已退役的 v1.3 离线训练档案。v1.4 运行时使用 Jev API，不再安装或调用这些分类头。下文为历史实验流程，不能用于覆盖当前运行配置。旧分类头保存在 `resources/classifier-v1/`（相对此目录）。
+
 # Local training workspace
 
 This directory contains every repository-owned input, script, artifact, and

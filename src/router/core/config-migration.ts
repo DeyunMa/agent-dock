@@ -21,45 +21,22 @@ function table(value: unknown): Table {
 export function migrateConfigSource(source: string): string {
   const raw = table(parse(source));
   const defaults = defaultConfig();
-  const legacyOllama = table(raw.ollama);
-  const existing = table(raw.classifier);
+  if (raw.version === CURRENT_CONFIG_VERSION) { parseConfig(source); return source; }
+  if (raw.version !== undefined && raw.version !== 1 && raw.version !== 2) throw new Error("Unsupported config version");
+  const previous = table(raw.classifier);
   raw.version = CURRENT_CONFIG_VERSION;
   raw.classifier = {
-    enabled:
-      typeof existing.enabled === "boolean"
-        ? existing.enabled
-        : typeof legacyOllama.enabled === "boolean"
-          ? legacyOllama.enabled
-          : defaults.classifier.enabled,
-    base_url:
-      typeof existing.base_url === "string"
-        ? existing.base_url
-        : typeof legacyOllama.base_url === "string"
-          ? legacyOllama.base_url
-          : defaults.classifier.baseUrl,
-    model:
-      typeof existing.model === "string"
-        ? existing.model
-        : defaults.classifier.model,
-    model_digest:
-      typeof existing.model_digest === "string"
-        ? existing.model_digest
-        : defaults.classifier.modelDigest,
-    model_directory:
-      typeof existing.model_directory === "string"
-        ? existing.model_directory
-        : "~/.agent-dock/classifier-v1",
-    timeout_ms:
-      typeof existing.timeout_ms === "number"
-        ? existing.timeout_ms
-        : defaults.classifier.timeoutMs,
-    keep_alive:
-      typeof existing.keep_alive === "string"
-        ? existing.keep_alive
-        : typeof legacyOllama.keep_alive === "string"
-          ? legacyOllama.keep_alive
-          : defaults.classifier.keepAlive,
+    enabled: previous.enabled ?? true,
+    base_url: defaults.classifier.baseUrl,
+    model: defaults.classifier.model,
+    api_key_file: "~/.agent-dock/credentials/jev-api-key",
+    timeout_ms: defaults.classifier.timeoutMs,
+    max_chars: defaults.classifier.maxChars,
   };
+  const routes = table(raw.routes);
+  raw.routes = { quick: routes.quick ?? defaults.routes.quick, balanced: routes.balanced ?? defaults.routes.balanced, deep: routes.max ?? routes.deep ?? defaults.routes.deep };
+  const routing = table(raw.routing);
+  raw.routing = { respect_cli_model_flag: routing.respect_cli_model_flag ?? true, state_directory: "~/.agent-dock/thread-routes", route_order: ["quick", "balanced", "deep"], controls: { step_up: defaults.routing.controls.stepUp, max: defaults.routing.controls.max, auto: defaults.routing.controls.auto, fallback_route: "deep" } };
   delete raw.ollama;
   delete raw.rules_file;
   delete raw.fail_open;

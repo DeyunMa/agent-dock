@@ -1,6 +1,6 @@
 {
   "name": "@mdy/agent-dock",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "private": true,
   "description": "A fail-open local Agent Dock for Codex Desktop and Codex CLI.",
   "type": "module",
@@ -9,8 +9,8 @@
     "codex": "bin/codex.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "build:macos": "swift build --package-path apps/macos/AgentDockBar",
+    "build": "node scripts/local/clean-build.mjs && tsc -p tsconfig.json",
+    "build:macos": "zsh scripts/macos/swift-build.sh",
     "bundle:macos": "./scripts/macos/build-app.sh",
     "run:macos": "swift run --package-path apps/macos/AgentDockBar AgentDockBar",
     "typecheck": "tsc -p tsconfig.json --noEmit",

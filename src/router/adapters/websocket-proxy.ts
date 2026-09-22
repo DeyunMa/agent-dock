@@ -81,8 +81,8 @@ export async function runInteractiveProxy(
   const backendLines = createInterface({ input: backend.stdout!, crlfDelay: Infinity });
   const backendTask = (async () => {
     for await (const line of backendLines) {
-      protocol.observeServerLine(line);
-      if (client?.readyState === WebSocket.OPEN) client.send(line);
+      const transformed = await protocol.transformServerLine(line);
+      if (client?.readyState === WebSocket.OPEN) client.send(transformed);
     }
   })();
 

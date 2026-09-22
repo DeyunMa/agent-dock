@@ -23,6 +23,7 @@ function decision(overrides: Partial<RouteDecision> = {}): RouteDecision {
     profile: { model: "gpt-5.6-terra", effort: "max", fast: false },
     reason: "embedding_primary",
     ai: {
+      routeName: "balanced",
       category: "AUDIT_ANALYZE",
       complexity: "simple",
       intent: "ask",
@@ -79,8 +80,8 @@ test("audit stores only the Router decision delta", async () => {
   assert.equal(event.route, "native");
   assert.equal(event.ai_status, "timeout");
   assert.equal(event.ai_latency_ms, 3000);
-  assert.equal(event.classifier_model, "qwen3-embedding:0.6b");
-  assert.equal(event.classifier_kind, "embedding_linear_heads");
+  assert.equal(event.classifier_model, "jev-latest");
+  assert.equal(event.classifier_kind, "jev_api");
   assert.equal("semantic_category" in event, false);
   assert.equal("complexity" in event, false);
   assert.equal("ai_category" in event, false);

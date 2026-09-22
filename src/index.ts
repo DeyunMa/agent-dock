@@ -15,7 +15,7 @@ function help(): string {
   return `Agent Dock ${VERSION}
 
 Usage:
-  agent-dock doctor [--json]       Check Codex, Ollama and configured routes
+  agent-dock doctor [--json]       Check Codex, Jev API and configured routes
   agent-dock classify [--json] TEXT
   agent-dock migrate-config        Upgrade the local config to the current schema
   agent-dock control-server        Run the loopback control API for the menu bar app
@@ -57,7 +57,6 @@ async function runManagement(args: string[], engine: RoutingEngine): Promise<num
       return 2;
     }
     const decision = await engine.routeTurn({
-      threadId: "router-classify",
       input: [{ type: "text", text: prompt }],
       cwd: process.cwd(),
     });
@@ -79,7 +78,7 @@ async function main(): Promise<number> {
     const changed = await migrateConfigFile();
     process.stdout.write(
       changed
-        ? "[agent-dock] config migrated to schema v2\n"
+        ? "[agent-dock] config migrated to schema v3\n"
         : "[agent-dock] no config migration was needed\n",
     );
     return 0;

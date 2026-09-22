@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { defaultConfig, loadConfig } from "../../../src/router/core/config.js";
+import { defaultConfig, loadConfig } from "./legacy-router/config.js";
 import {
   COMPLEXITIES,
   EXECUTION_INTENTS,
@@ -10,7 +10,7 @@ import {
   type Complexity,
   type ExecutionIntent,
   type SemanticCategory,
-} from "../../../src/router/core/types.js";
+} from "./legacy-router/types.js";
 import { routeForLabels } from "./prepare-dataset.js";
 import { writePrivateAtomically as writeAtomically } from "./private-files.js";
 

@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 
 export function backendEnvironment(): NodeJS.ProcessEnv {
   const environment = { ...process.env };
+  delete environment.TYPESAFE_API_KEY;
   delete environment.CODEX_CLI_PATH;
   delete environment.AGENT_DOCK_ENTRYPOINT;
   delete environment.AGENT_DOCK_BYPASS;

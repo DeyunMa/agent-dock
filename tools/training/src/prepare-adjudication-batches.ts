@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Complexity, ExecutionIntent, SemanticCategory } from "../../../src/router/core/types.js";
+import type { Complexity, ExecutionIntent, SemanticCategory } from "./legacy-router/types.js";
 import { writePrivateAtomically as writeAtomically } from "./private-files.js";
 
 interface FirstPassRecord {

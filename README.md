@@ -4,44 +4,45 @@
 
 - Desktop：照常点击 ChatGPT / Codex 图标。
 - CLI：照常输入 `codex`。
-- 每个 `turn/start`：自动选择 `model`、`effort` 和 `fast`。
-- 每次决策额外识别 `ask / do / continue / control / unknown`，只用于本地展示与审计，不参与档位选择，也不注入模型上下文。
+- 每段对话仅首次请求调用 Jev API，选择并持久化 `model`、`effort` 和 `fast`；后续沿用，不自动切换。
+- Codex 模型菜单会显示 `Jev Router`：选择它才进入自动模式；选择任何真实模型均为手动模式，Agent Dock 原样尊重。
+- 首轮决策额外识别 `ask / do / continue / control / unknown`，只用于本地展示与审计，不参与档位选择，也不注入模型上下文。
 - 终端和 Desktop 请求在本轮路由决策产生后，由菜单栏 App 在屏幕顶部短暂显示 `[intent] [route]`；不等待 Codex 回答，也不向 Codex TUI 或 Codex Desktop 对话中插入消息。
 
-Router 不修改原始 prompt，不改变权限、sandbox 或工具配置；embedding、线性分类头或代理发生错误时原样直通 Codex。
+Router 不修改原始 prompt，不改变权限、sandbox 或工具配置；Jev API、路由状态存储或代理发生错误时原样直通 Codex。
 
 ## 默认路由
 
 | Route | Model | Effort | Fast |
 | --- | --- | --- | --- |
-| `quick` | `gpt-5.6-luna` | `low` | `true` |
-| `balanced` | `gpt-5.6-terra` | `max` | `false` |
-| `deep` | `gpt-5.6-sol` | `high` | `false` |
-| `max` | `gpt-5.6-sol` | `xhigh` | `false` |
+| `quick`（轻量） | `gpt-5.6-terra` | `low` | `true` |
+| `balanced`（标准） | `gpt-5.6-sol` | `high` | `false` |
+| `deep`（深入） | `gpt-6-astra` | `xhigh` | `false` |
 
 `fast = true` 在 App Server 协议中写成 `serviceTier = "priority"`；`false` 写成 `null`，恢复默认速度层。
 
 配置文件是 `~/.agent-dock/router.toml`。可以修改：
 
-- `[routing.category_routes]`：问题类型对应哪个 Route。
-- `[routes.*]`：Route 对应的模型、推理强度、是否 Fast。
-- `[routing.complexity_routes]`：复杂度是否自动升级。
-- `[routing.controls]`：手动升一档、最高档和恢复自动的完整消息触发词。
-- `[classifier]`：本地 embedding 模型、运行时线性头目录、超时和保活时间。
+- `[routes.*]`：三档的模型、推理强度和 Fast。
+- `[routing.controls]`：手动升档、拉满和重置首轮选择的完整消息触发词。
+- `[classifier]`：Jev 模型、密钥文件、请求超时（默认 2.5 秒）、输入字符预算。
+- `[routing.state_directory]`：按 task 持久化的档位快照，不含 prompt 或密钥。
 
-运行中的 Router 会在每个新 `turn/start` 前比较配置文件和三个分类头的 metadata；只有它们发生变化时才重新加载。因此 Router 开关、模型、推理强度和 Fast 修改会从下一次请求开始生效，不需要重启 Desktop。
+配置热加载只影响新对话；已有对话保留实际模型、effort 和 Fast 的首次快照。开关仍即时生效。
 
 ## 工作方式
 
-1. 先处理不可学习的硬控制：Router 开关、CLI 显式模型、手动升档/拉满/恢复自动、明确“不要路由”和内部协议上下文。
-2. 正常请求只发送到 loopback Ollama 的 `qwen3-embedding:0.6b`，生成 1,024 维向量；不再调用 2B 生成式模型。
-3. 三个本地 multinomial logistic-regression 线性头直接预测 `intent / category / complexity`；仓库发布副本位于 `resources/router/classifier-v1/`，安装后以 owner-only 权限复制到 `~/.agent-dock/classifier-v1/`。
-4. `category + complexity` 通过 TOML 确定性映射为 Route；`intent` 仍只用于展示和审计。
-5. 分类器冷启动、超时、模型不匹配或产物损坏时不回退到旧语义规则，而是原样直通 Codex；精确续话在已有 task 路由时可沿用 sticky state。
-6. 代理只改 App Server 的 `turn/start.params.model / effort / serviceTier`；如果有 `collaborationMode`，同步其 model/effort 设置。
+1. Router 开关、CLI 显式模型、手动控制和明确禁用优先处理。
+2. 首次请求将用户输入、三档模型配置及职责描述发到 `https://api.typesafe.ai/v1/systemone`；不发送会话历史。超长输入保留首尾，总字符预算默认 12,000。
+3. Jev 一次回答 `route` 和独立展示字段 `intent`；程序验证选项、概率和模型目录后应用选择。
+4. `~/.agent-dock/thread-routes/` 保存每段对话的首次选择。原子占位防止多进程重复调用；进程重启、热更新和后续复杂度变化均不自动重新路由。
+5. `model/list` 返回前注册 UI 专用的 `jev-router`；发往 Codex 后端前必须还原成真实模型。自动／手动选择与实际 profile 分开保存，虚拟模型 ID 不进入生成请求。
+6. 首次超时、认证失败或无效响应时直通，不重试；同一对话随后沿用原模型。恢复/派生已有历史但无本地记录的对话也直通，不补做首轮判断。崩溃留下的占位不会自动重试。
+7. 只有用户明确发送“加强一点”“拉满”才手动改变档位；“恢复自动”显式清除当前记录，下一次有效请求重新选择。
+8. 只修改 App Server 的 `model / effort / serviceTier` 及 collaboration settings 中对应字段；原始输入、权限、工具和 sandbox 保持不变。
 
 详细设计见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
-四档下一版策略见 [docs/ROUTING-STRATEGY.md](docs/ROUTING-STRATEGY.md)（仅提案，未改变当前行为）。
+旧四档讨论稿 [docs/ROUTING-STRATEGY.md](docs/ROUTING-STRATEGY.md) 已被当前三档实现取代。
 回滚方式见 [docs/ROLLBACK.md](docs/ROLLBACK.md)。
 当前结构、三个功能 Module 与 Island 后续演进见 [docs/MODULE-PLAN.md](docs/MODULE-PLAN.md)（Island Core 已落地；M4 实机连接尚未实现）。
 Hook 如何驱动 Island、如何合并高频事件并为 M4 生成稳定状态，以及 CodeIsland 可借鉴的边界见
@@ -54,14 +55,14 @@ M4X 插件版系统的调研、两阶段设备路线与实机到手前的停止�
 - 源码：当前 Git clone 所在目录（不依赖固定路径）
 - 命令：`~/.local/bin/agent-dock`、`~/.local/bin/codex`
 - 配置：`~/.agent-dock/router.toml`
-- 发布分类头：`resources/router/classifier-v1/{intent,category,complexity}.json`
-- 运行时分类头：`~/.agent-dock/classifier-v1/{intent,category,complexity}.json`
+- Jev 密钥：`~/.agent-dock/credentials/jev-api-key`（0600；目录 0700），也可使用 `TYPESAFE_API_KEY`
+- 首轮路由记录：`~/.agent-dock/thread-routes/`（无正文，仅模型档位快照）
 - 审计日志：`~/.agent-dock/events.jsonl`（当前文件最大 30MB，保留 1 份 `.1` 备份）
 - 展示事件流：`~/.agent-dock/decision-feed/`（每次触发一个原子事件，最多保留 200 条；按请求到达时间排序）
 
 审计日志是 Codex 会话 JSONL 的轻量路由索引：只保存 `thread_id`、prompt hash、意图、实际档位、原因、分类器状态和延迟；不保存 prompt 明文、category、complexity、cwd、实际 model/effort 或工具记录。完整对话事实仍由 `~/.codex/sessions/` 保存。
 
-1.3 继续使用审计 schema v3；正常分类记录 `classifier_model / classifier_kind / ai_status / ai_latency_ms`，硬控制不写这些可选字段。历史日志无需迁移，也不会被安装脚本改写。
+1.4 继续使用审计 schema v3；正常分类记录 `classifier_model / classifier_kind / ai_status / ai_latency_ms`，硬控制不写这些可选字段。历史日志无需迁移，也不会被安装脚本改写。
 
 ## 管理命令
 
@@ -98,9 +99,11 @@ open "$HOME/Applications/Agent Dock.app"
 
 开发 bundle 放在 SwiftPM 的隐藏 `.build` 目录，仅用于安装或打包，不与正式副本同时启动。日常使用的唯一副本位于 `~/Applications/Agent Dock.app`。
 
-菜单栏 App 会按需启动 `agent-dock control-server`；子进程同时监测父 App，异常退出后也会自动回收。Router 与档位修改从下一次请求生效。Gateway 切换会修改 Codex 的连接配置，只影响新启动的 Codex 会话：启用时先让 OpenCodex 通过健康检查，再执行 `ocx restore back`；恢复原生时执行 `ocx restore`，OpenCodex 可继续在后台待命。
+菜单栏 App 会按需启动 `agent-dock control-server`；子进程同时监测父 App，异常退出后也会自动回收。开关从下一请求生效，档位修改仅影响新对话。Gateway 切换会修改 Codex 的连接配置，只影响新启动的 Codex 会话：启用时先让 OpenCodex 通过健康检查，再执行 `ocx restore back`；恢复原生时执行 `ocx restore`，OpenCodex 可继续在后台待命。
 
 “配置供应商…”与“启用 Gateway”是两个独立动作。由于上游 `ocx gui` 在代理未运行时会自动启动并注入 Gateway，Control Module 会记住点击前的 routed 状态；如果原来走原生，Dashboard 打开后会稳定执行 `ocx restore`，确保配置动作本身不改变数据路径。
+
+OpenCodex 路由状态同时识别传统 `/v1` 和启用 Codex context relay 后的 `/backend-api/codex` 注入路径；两者都必须与配置的本机 Gateway origin 完全一致。
 
 OpenCodex 的安装、版本、运行和 routed 状态由菜单栏实时检测，不在源码文档中固化本机快照。本地 bundle 使用 ad-hoc 签名；正式分发、自动更新和 notarization 不属于当前底座。
 
@@ -108,17 +111,25 @@ OpenCodex 的安装、版本、运行和 routed 状态由菜单栏实时检测�
 
 ## 安装与升级
 
-前置条件是 Node.js 22+、pnpm、Ollama，以及仓库声明的 embedding 模型：
+前置条件为 Node.js 22+、pnpm 和可用 Jev API key。不需要 Ollama 或本地模型。
 
 ```bash
-ollama pull qwen3-embedding:0.6b
-./scripts/local/install.sh
-pnpm bundle:macos
+rtk proxy python3 scripts/local/set-jev-key.py  # 隐藏输入，不写命令历史
+rtk proxy ./scripts/local/install.sh
+rtk proxy zsh scripts/macos/install-app.sh
+rtk proxy agent-dock doctor
 ```
 
-安装脚本直接使用仓库内 `resources/router/classifier-v1/` 的三个已验证线性头，将它们以 owner-only 权限原子复制到 `~/.agent-dock/`，并从新模板创建配置。安装不读取训练工作区、历史会话或审计 JSONL。
+安装脚本备份旧 TOML，再迁移到 v3：保留 quick/balanced，将旧 max 合并为 deep，移除本地 embedding 配置。不会安装历史分类头、读取训练数据或更改 Codex 历史。代码升级后需重启 Codex Desktop 一次以加载新版代理；安装不会中断正在运行的 Codex。
 
-本地重新训练并验证新分类头后，可以临时通过 `AGENT_DOCK_CLASSIFIER_SOURCE=/absolute/path` 安装候选产物；只有明确发布的新版本才应替换仓库内的默认 bundle。
+`doctor` 会发送一条固定的模拟请求验证 API；`classify` 每次作为独立诊断请求。密钥文件不进入仓库、日志或模型输入，也不会传给 Codex 子进程。
+
+卸载旧 Ollama（会删除其全部模型、应用数据和本机身份文件）：
+
+```bash
+rtk proxy python3 scripts/local/uninstall-ollama.py            # dry-run
+rtk proxy python3 scripts/local/uninstall-ollama.py --confirm  # 确认范围后执行
+```
 
 ## 开发验证
 
@@ -129,7 +140,7 @@ pnpm build
 ./scripts/local/install.sh
 ```
 
-测试覆盖发布分类头及其校验和、embedding 线性头合同、硬护栏、长对话续路由、prompt 不变、配置热加载与 sticky state、乱序展示事件、逐会话并发转发、Control API 原子写入、会话元数据、Gateway Adapter、Desktop stdio 代理和 CLI WebSocket 代理。
+测试覆盖 Jev 请求与失败、首轮持久化、跨进程去重、恢复会话、硬护栏、prompt 不变、配置热加载与固定档位、乱序展示事件、逐会话并发转发、Control API 原子写入、会话元数据、Gateway Adapter、Desktop stdio 代理和 CLI WebSocket 代理。
 
 ## 源码结构
 
@@ -152,12 +163,12 @@ apps/macos/AgentDockBar/Sources/AgentDockBar/
 └── Views/Components/
 
 tools/training/
-├── src/        # 私有数据准备、历史规则基线和可复现实验
+├── src/        # 历史离线实验（不进入 Router 运行时）
+├── resources/classifier-v1/  # 已退役分类头档案
 ├── python/     # CPU 训练与验证
 └── work/       # Git ignored 的 prompt、embedding、模型和报告
 
 resources/router/
-├── classifier-v1/  # 可安装的已验证分类头与 manifest
 └── router.toml.example
 
 scripts/
@@ -177,4 +188,8 @@ test/
 - Desktop 使用 `CODEX_CLI_PATH` 选择 Agent Dock executable。这是当前 Desktop 本地实现支持的入口，但不是公开稳定配置；Desktop 升级后运行 `agent-dock doctor` 和协议 smoke test。
 - 交互式 CLI 使用当前 Codex 官方 `--remote` 入口和一个仅绑定 `127.0.0.1` 的临时 WebSocket；每个 CLI 会话一个代理进程，不开放常驻端口。
 - `codex exec PROMPT` 可以在启动前路由；从 stdin 才读取 prompt 的 `codex exec -` 保持直通，避免代理吞掉管道输入。
-- Router 的 embedding 分类、模型产物、配置重载和审计都保持 fail-open。OpenCodex 一旦被选为网络 Gateway，就是实际数据路径依赖；崩溃时无法在单个已启动会话内无损切回。当前缓解方式是启用前健康检查、明确状态提示，以及一键 `ocx restore` 恢复原生连接。
+- Router 的 Jev API、状态存储、配置重载和审计都保持 fail-open。OpenCodex 一旦被选为网络 Gateway，就是实际数据路径依赖；崩溃时无法在单个已启动会话内无损切回。当前缓解方式是启用前健康检查、明确状态提示，以及一键 `ocx restore` 恢复原生连接。
+
+macOS 构建使用 `scripts/macos/swift-build.sh`，默认选择本机 macOS 26.5 SDK，避开 CLT 27 缺失 SwiftUI 宏插件的问题；可通过 `AGENT_DOCK_SWIFT_SDK` 显式指定其他完整 SDK，不修改全局 Xcode 选择。
+
+Jev 提问合同参考官方 [Patterns](https://docs.typesafe.ai/patterns) 和 [Confidence](https://docs.typesafe.ai/confidence)：使用有明确职责的有限 Choice，将 route 与观察性 intent 一次独立提问；confidence 只记录，不在缺少校准数据时当作准确率或另设重试门槛。

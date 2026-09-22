@@ -1,3 +1,5 @@
+> 历史讨论稿：四档方案已由 v1.4 的 Jev API 三档首轮路由取代，以 ARCHITECTURE.md 为准。
+
 # 四档路由策略提案（讨论稿）
 
 > 状态：仅方案，尚未修改当前 `quick / balanced / deep / max` 的运行逻辑。

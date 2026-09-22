@@ -3,13 +3,13 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfig } from "../../../src/router/core/config.js";
+import { loadConfig } from "./legacy-router/config.js";
 import type {
   Complexity,
   ExecutionIntent,
   RouterConfig,
   SemanticCategory,
-} from "../../../src/router/core/types.js";
+} from "./legacy-router/types.js";
 import {
   classifyWithRules,
   loadRules,

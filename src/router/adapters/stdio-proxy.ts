@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { StringDecoder } from "node:string_decoder";
 import type { RoutingEngine } from "../core/engine.js";
 import { ClientLineDispatcher } from "./client-line-dispatcher.js";
 import { backendEnvironment, forwardSignals } from "./codex-process.js";
@@ -21,18 +20,12 @@ export async function runStdioProxy(
   engine.warmup();
 
   child.stderr?.pipe(process.stderr);
-  const decoder = new StringDecoder("utf8");
-  let serverBuffer = "";
-  child.stdout?.on("data", (chunk: Buffer) => {
-    process.stdout.write(chunk);
-    serverBuffer += decoder.write(chunk);
-    let newline = serverBuffer.indexOf("\n");
-    while (newline >= 0) {
-      protocol.observeServerLine(serverBuffer.slice(0, newline).replace(/\r$/, ""));
-      serverBuffer = serverBuffer.slice(newline + 1);
-      newline = serverBuffer.indexOf("\n");
+  const serverLines = createInterface({ input: child.stdout!, crlfDelay: Infinity });
+  const outputTask = (async () => {
+    for await (const line of serverLines) {
+      process.stdout.write(`${await protocol.transformServerLine(line)}\n`);
     }
-  });
+  })();
 
   const inputTask = (async () => {
     const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -62,6 +55,7 @@ export async function runStdioProxy(
     });
     child.once("exit", (code, signal) => resolve(code ?? (signal ? 128 : 1)));
   });
+  await outputTask;
   cleanupSignals();
   void inputTask;
   return exitCode;

@@ -1,10 +1,8 @@
 import { stat } from "node:fs/promises";
-import { join } from "node:path";
 import { configuredConfigPath, expandHome, loadConfig } from "./config.js";
-import { EmbeddingClassifier } from "./embedding-classifier.js";
+import { JevClassifier } from "./jev-classifier.js";
 import {
   RouterEngine,
-  RouterSessionState,
   type AiClassifier,
   type RouteOptions,
   type RoutingEngine,
@@ -26,33 +24,21 @@ async function fileSignature(path: string): Promise<string> {
   }
 }
 
-async function artifactSignature(config: RouterConfig): Promise<string> {
-  return (
-    await Promise.all(
-      ["intent.json", "category.json", "complexity.json"].map((name) =>
-        fileSignature(join(config.classifier.modelDirectory, name)),
-      ),
-    )
-  ).join("|");
-}
-
 export type ClassifierFactory = (config: RouterConfig) => AiClassifier;
 
 const defaultClassifierFactory: ClassifierFactory = (config) =>
-  new EmbeddingClassifier(config.classifier);
+  new JevClassifier(config);
 
 /**
- * Keeps the data plane hot while making control-plane edits and private model
- * updates visible on the next turn. Reload failures bubble to ProtocolRouter,
+ * Makes control-plane edits visible to new tasks; existing profiles live in
+ * the durable thread store. Reload failures bubble to ProtocolRouter,
  * whose contract is byte-for-byte fail-open.
  */
 export class ReloadingRouterEngine implements RoutingEngine {
   private engine: RouterEngine;
   private configSignature: string;
-  private artifactSignature: string;
   private catalog?: ModelCatalog;
   private reloadTask: Promise<void> | undefined;
-  private readonly sessionState: RouterSessionState;
   private classifier: AiClassifier;
   private classifierConfigSignature: string;
 
@@ -61,15 +47,11 @@ export class ReloadingRouterEngine implements RoutingEngine {
     private readonly classifierFactory: ClassifierFactory,
     engine: RouterEngine,
     configSignature: string,
-    classifierArtifactSignature: string,
-    sessionState: RouterSessionState,
     classifier: AiClassifier,
     classifierConfigSignature: string,
   ) {
     this.engine = engine;
     this.configSignature = configSignature;
-    this.artifactSignature = classifierArtifactSignature;
-    this.sessionState = sessionState;
     this.classifier = classifier;
     this.classifierConfigSignature = classifierConfigSignature;
   }
@@ -80,16 +62,13 @@ export class ReloadingRouterEngine implements RoutingEngine {
   ): Promise<ReloadingRouterEngine> {
     const configPath = expandHome(path);
     const config = await loadConfig(configPath);
-    const sessionState = new RouterSessionState();
     const classifier = classifierFactory(config);
-    const classifierConfigSignature = JSON.stringify(config.classifier);
+    const classifierConfigSignature = JSON.stringify({ classifier: config.classifier, routes: config.routes });
     return new ReloadingRouterEngine(
       configPath,
       classifierFactory,
-      new RouterEngine(config, classifier, sessionState),
+      new RouterEngine(config, classifier),
       await fileSignature(configPath),
-      await artifactSignature(config),
-      sessionState,
       classifier,
       classifierConfigSignature,
     );
@@ -119,28 +98,22 @@ export class ReloadingRouterEngine implements RoutingEngine {
   private async reloadIfChangedUnserialized(): Promise<void> {
     const nextConfigSignature = await fileSignature(this.configPath);
     const configChanged = nextConfigSignature !== this.configSignature;
-    const nextArtifactSignature = configChanged
-      ? this.artifactSignature
-      : await artifactSignature(this.engine.config);
-    if (!configChanged && nextArtifactSignature === this.artifactSignature) return;
+    if (!configChanged) return;
 
     const config = await loadConfig(this.configPath);
-    const resolvedArtifactSignature = await artifactSignature(config);
-    const classifierConfigSignature = JSON.stringify(config.classifier);
+    const classifierConfigSignature = JSON.stringify({ classifier: config.classifier, routes: config.routes });
     if (
-      classifierConfigSignature !== this.classifierConfigSignature ||
-      resolvedArtifactSignature !== this.artifactSignature
+      classifierConfigSignature !== this.classifierConfigSignature
     ) {
       this.classifier = this.classifierFactory(config);
       this.classifierConfigSignature = classifierConfigSignature;
     }
-    const replacement = new RouterEngine(config, this.classifier, this.sessionState);
+    const replacement = new RouterEngine(config, this.classifier);
     if (this.catalog) replacement.setModelCatalog(this.catalog);
     replacement.warmup();
 
     this.engine = replacement;
     this.configSignature = nextConfigSignature;
-    this.artifactSignature = resolvedArtifactSignature;
   }
 
   async routeTurn(

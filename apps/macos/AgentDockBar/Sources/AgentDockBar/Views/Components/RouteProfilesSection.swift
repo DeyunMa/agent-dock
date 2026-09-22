@@ -140,7 +140,7 @@ private struct RouteEditorRow: View {
                     .frame(width: RouteRowMetrics.disclosureWidth)
                     .accessibilityHidden(true)
 
-                Text(route.name)
+                Text(route.displayName)
                     .font(.caption.monospaced().weight(.semibold))
                     .frame(width: RouteRowMetrics.routeWidth, alignment: .leading)
 
@@ -170,7 +170,7 @@ private struct RouteEditorRow: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(
-            "\(route.name) 档位，\(route.model)，推理 \(route.effort)，\(route.fast ? "Fast" : "标准")"
+            "\(route.displayName) 档位，\(route.model)，推理 \(route.effort)，\(route.fast ? "Fast" : "标准")"
         )
         .accessibilityValue(isExpanded ? "已展开" : "已折叠")
     }

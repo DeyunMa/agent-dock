@@ -16,6 +16,7 @@ class FakeClassifier implements AiClassifier {
       return {
         status: "ok",
         decision: {
+          routeName: "balanced",
           category: "PASS_CONTEXT",
           complexity: "simple",
           intent: "continue",
@@ -29,6 +30,7 @@ class FakeClassifier implements AiClassifier {
     return {
       status: "ok",
       decision: {
+        routeName: diagnostic ? "deep" : "quick",
         category: diagnostic ? "DIAGNOSE_FIX" : "RESEARCH_EXPLAIN",
         complexity: diagnostic ? "complex" : "simple",
         intent: diagnostic ? "do" : "ask",
@@ -47,8 +49,10 @@ test("a running Router hot-loads switch and route edits on the next turn", async
   const configPath = join(directory, "router.toml");
   await writeFile(
     configPath,
-    `version = 2
+    `version = 3
 enabled = true
+[routing]
+state_directory = "${directory}/thread-routes"
 
 [logging]
 audit_file = "/dev/null"
@@ -94,13 +98,15 @@ fast = false
   assert.equal(disabled.reason, "router_disabled");
 });
 
-test("hot reload preserves sticky session state and resolves the updated profile", async () => {
+test("hot reload keeps the original pinned profile for existing tasks", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agent-dock-reload-state-"));
   const configPath = join(directory, "router.toml");
   await writeFile(
     configPath,
-    `version = 2
+    `version = 3
 enabled = true
+[routing]
+state_directory = "${directory}/thread-routes"
 
 [logging]
 audit_file = "/dev/null"
@@ -129,11 +135,11 @@ fast = false
     threadId: "sticky-reload",
     input: [{ type: "text", text: "继续" }],
   });
-  assert.equal(continued.reason, "sticky_context");
+  assert.equal(continued.reason, "first_turn_pinned");
   assert.equal(continued.routeName, "deep");
   assert.deepEqual(continued.profile, {
-    model: "provider/deep-v2",
-    effort: "xhigh",
+    model: "gpt-5.6-sol",
+    effort: "high",
     fast: false,
   });
 });

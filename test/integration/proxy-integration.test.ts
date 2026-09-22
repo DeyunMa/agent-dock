@@ -17,107 +17,44 @@ import {
 const root = new URL("../..", import.meta.url).pathname;
 const fakeCodex = new URL("../fixtures/fake-codex.mjs", import.meta.url).pathname;
 
-function rows(
-  classes: readonly string[],
-  leftWinner: string,
-  rightWinner: string,
-): number[][] {
-  return classes.map((value) => {
-    if (value === leftWinner) return [2, 0];
-    if (value === rightWinner) return [0, 2];
-    return [-1, -1];
-  });
-}
-
-async function classifierModels(directory: string): Promise<void> {
-  const classifier = defaultConfig().classifier;
-  const heads = {
-    intent: {
-      classes: EXECUTION_INTENTS,
-      coefficients: rows(EXECUTION_INTENTS, "ask", "do"),
-    },
-    category: {
-      classes: SEMANTIC_CATEGORIES,
-      coefficients: rows(
-        SEMANTIC_CATEGORIES,
-        "RESEARCH_EXPLAIN",
-        "AGENT_WORKFLOW",
-      ),
-    },
-    complexity: {
-      classes: COMPLEXITIES,
-      coefficients: rows(COMPLEXITIES, "simple", "complex"),
-    },
-  };
-  await Promise.all(
-    Object.entries(heads).map(([target, head]) =>
-      writeFile(
-        join(directory, `${target}.json`),
-        `${JSON.stringify({
-          schema_version: 1,
-          kind: "multinomial_logistic_regression",
-          target,
-          classes: head.classes,
-          coefficients: head.coefficients,
-          intercepts: head.classes.map(() => 0),
-          embedding_model: classifier.model,
-          embedding_model_digest: classifier.modelDigest,
-          embedding_dimensions: 2,
-          embedding_max_chars: 2000,
-          embedding_preprocessing: "collapse_whitespace_then_tail_v1",
-          normalization: "l2_unit_embedding",
-        })}\n`,
-        { mode: 0o600 },
-      ),
-    ),
-  );
-}
-
-const embeddingServer = createServer(async (request, response) => {
-  if (request.url !== "/api/embed") {
+const jevServer = createServer(async (request, response) => {
+  if (request.url !== "/v1/systemone") {
     response.writeHead(404).end();
     return;
   }
   const chunks: Buffer[] = [];
   for await (const chunk of request) chunks.push(Buffer.from(chunk));
-  const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { input?: string };
-  const implementation = body.input?.includes("实现") ?? false;
+  const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { state?: { first_user_input?: string } };
+  const implementation = body.state?.first_user_input?.includes("实现") ?? false;
   response.writeHead(200, { "content-type": "application/json" });
   response.end(
-    JSON.stringify({ embeddings: [implementation ? [0, 1] : [1, 0]] }),
+    JSON.stringify({ answers: { route: {type:"choice",choice:implementation ? "deep":"quick",confidence:1,probabilities: {quick:implementation?0:1,balanced:0,deep:implementation?1:0}}, intent:{type:"choice",choice:implementation?"do":"ask",confidence:1,probabilities:{ask:implementation?0:1,do:implementation?1:0,continue:0,control:0,unknown:0}} } }),
   );
 });
 await new Promise<void>((resolve) =>
-  embeddingServer.listen(0, "127.0.0.1", resolve),
+  jevServer.listen(0, "127.0.0.1", resolve),
 );
-test.after(() => embeddingServer.close());
-const embeddingAddress = embeddingServer.address();
-if (!embeddingAddress || typeof embeddingAddress === "string") {
-  throw new Error("unable to start fake embedding server");
+test.after(() => jevServer.close());
+const jevAddress = jevServer.address();
+if (!jevAddress || typeof jevAddress === "string") {
+  throw new Error("unable to start fake jev server");
 }
-const embeddingPort = embeddingAddress.port;
+const jevPort = jevAddress.port;
 
 async function testConfig(): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "agent-dock-test-"));
   const path = join(directory, "router.toml");
-  const models = join(directory, "classifier-v1");
-  await import("node:fs/promises").then(({ mkdir }) =>
-    mkdir(models, { mode: 0o700 }),
-  );
-  await classifierModels(models);
-  const classifier = defaultConfig().classifier;
   await writeFile(
     path,
-    `version = 2
+    `version = 3
 enabled = true
 [classifier]
 enabled = true
-base_url = "http://127.0.0.1:${embeddingPort}"
-model = "${classifier.model}"
-model_digest = "${classifier.modelDigest}"
-model_directory = "${models}"
+base_url = "https://api.typesafe.ai"
+model = "jev-latest"
 timeout_ms = 1000
-keep_alive = "30m"
+[routing]
+state_directory = "${directory}/thread-routes"
 [codex]
 cli_binary = "${fakeCodex}"
 desktop_binary = "${fakeCodex}"
@@ -130,9 +67,9 @@ audit_file = "${join(directory, "events.jsonl")}"
 
 async function runNode(args: string[], config: string, input?: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, args, {
+    const child = spawn(process.execPath, ["--import", "./test/fixtures/mock-jev-fetch.mjs", ...args], {
       cwd: root,
-      env: { ...process.env, AGENT_DOCK_CONFIG: config, AGENT_DOCK_BACKEND: fakeCodex },
+      env: { ...process.env, AGENT_DOCK_CONFIG: config, AGENT_DOCK_BACKEND: fakeCodex, TYPESAFE_API_KEY: "test-key", AGENT_DOCK_TEST_JEV_URL: `http://127.0.0.1:${jevPort}` },
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";
@@ -176,7 +113,7 @@ test("Desktop stdio adapter transparently mutates a real JSONL stream", async ()
     params: {
       threadId: "desktop-test",
       input: [{ type: "text", text: "请实现 Agent Dock 透明代理" }],
-      model: "original",
+      model: "jev-router",
       effort: "low",
       serviceTier: "priority",
     },
@@ -189,8 +126,8 @@ test("Desktop stdio adapter transparently mutates a real JSONL stream", async ()
   const captured = firstJsonLine(stdout) as {
     result: { model: string; effort: string; serviceTier: string | null; input: unknown[] };
   };
-  assert.equal(captured.result.model, "gpt-5.6-sol");
-  assert.equal(captured.result.effort, "high");
+  assert.equal(captured.result.model, "gpt-6-astra");
+  assert.equal(captured.result.effort, "xhigh");
   assert.equal(captured.result.serviceTier, null);
   assert.deepEqual(captured.result.input, [{ type: "text", text: "请实现 Agent Dock 透明代理" }]);
   const event = await waitForDecision(config);
@@ -209,7 +146,7 @@ test("CLI adapter creates one local WebSocket proxy per interactive session", as
     serviceTier: string | null;
     input: unknown[];
   };
-  assert.equal(captured.model, "gpt-5.6-luna");
+  assert.equal(captured.model, "gpt-5.6-terra");
   assert.equal(captured.effort, "low");
   assert.equal(captured.serviceTier, "priority");
   assert.deepEqual(captured.input, [{ type: "text", text: "请解释什么是幂等性" }]);
@@ -224,10 +161,10 @@ test("codex exec publishes its decision before the delegated command exits", asy
   const config = await testConfig();
   const child = spawn(
     process.execPath,
-    ["--import", "tsx", "src/index.ts", "cli", "exec", "只回复结论"],
+    ["--import", "./test/fixtures/mock-jev-fetch.mjs", "--import", "tsx", "src/index.ts", "cli", "exec", "只回复结论"],
     {
       cwd: root,
-      env: { ...process.env, AGENT_DOCK_CONFIG: config },
+      env: { ...process.env, AGENT_DOCK_CONFIG: config, TYPESAFE_API_KEY: "test-key", AGENT_DOCK_TEST_JEV_URL: `http://127.0.0.1:${jevPort}` },
       stdio: "ignore",
     },
   );

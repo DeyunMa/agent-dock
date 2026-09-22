@@ -3,7 +3,7 @@ import { scoringText } from "./legacy-prompt.js";
 import {
   SEMANTIC_CATEGORIES,
   type SemanticCategory,
-} from "../../../src/router/core/types.js";
+} from "./legacy-router/types.js";
 
 export interface RulePattern {
   regex: string;

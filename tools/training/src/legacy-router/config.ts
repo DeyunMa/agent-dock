@@ -2,25 +2,50 @@ import { access, readFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parse } from "smol-toml";
 import {
+  COMPLEXITIES,
+  SEMANTIC_CATEGORIES,
+  type Complexity,
   type GatewayKind,
   type RouteProfile,
   type RouterConfig,
   type RoutingControlConfig,
+  type SemanticCategory,
 } from "./types.js";
 
-export const DEFAULT_CONFIG_PATH = "~/.agent-dock/router.toml";
-export const CURRENT_CONFIG_VERSION = 3;
+export const DEFAULT_CONFIG_PATH = fileURLToPath(new URL("../../resources/router-v2.toml", import.meta.url));
+export const CURRENT_CONFIG_VERSION = 2;
 
 export function configuredConfigPath(): string {
-  return process.env.AGENT_DOCK_CONFIG ?? DEFAULT_CONFIG_PATH;
+  return process.env.AGENT_DOCK_TRAINING_CONFIG ?? DEFAULT_CONFIG_PATH;
 }
 
 const DEFAULT_ROUTES: Record<string, RouteProfile> = {
-  quick: { model: "gpt-5.6-terra", effort: "low", fast: true },
-  balanced: { model: "gpt-5.6-sol", effort: "high", fast: false },
-  deep: { model: "gpt-6-astra", effort: "xhigh", fast: false },
+  quick: { model: "gpt-5.6-luna", effort: "low", fast: true },
+  balanced: { model: "gpt-5.6-terra", effort: "max", fast: false },
+  deep: { model: "gpt-5.6-sol", effort: "high", fast: false },
+  max: { model: "gpt-5.6-sol", effort: "xhigh", fast: false },
+};
+
+const DEFAULT_CATEGORY_ROUTES: Record<SemanticCategory, string> = {
+  RESEARCH_EXPLAIN: "quick",
+  AUDIT_ANALYZE: "balanced",
+  DIAGNOSE_FIX: "deep",
+  PLAN_DESIGN: "deep",
+  IMPLEMENT_CHANGE: "balanced",
+  OPERATE_VERIFY: "balanced",
+  CREATE_ARTIFACT: "deep",
+  AGENT_WORKFLOW: "deep",
+  PASS_CONTEXT: "inherit",
+};
+
+const DEFAULT_COMPLEXITY_ROUTES: Record<Complexity, string> = {
+  simple: "quick",
+  normal: "inherit",
+  complex: "deep",
+  extreme: "max",
 };
 
 const DEFAULT_ROUTING_CONTROLS: RoutingControlConfig = {
@@ -42,17 +67,20 @@ export function defaultConfig(): RouterConfig {
     enabled: true,
     classifier: {
       enabled: true,
-      baseUrl: "https://api.typesafe.ai",
-      model: "jev-latest",
-      apiKeyFile: expandHome("~/.agent-dock/credentials/jev-api-key"),
-      timeoutMs: 2500,
-      maxChars: 12000,
+      baseUrl: "http://127.0.0.1:11434",
+      model: "qwen3-embedding:0.6b",
+      modelDigest: "ac6da0dfba84a81fdbfbaf330198c33cd77c4cdfc53e8bc50eb581914a15621d",
+      modelDirectory: expandHome("~/.agent-dock/classifier-v1"),
+      timeoutMs: 1600,
+      keepAlive: "30m",
     },
     routing: {
-      stateDirectory: expandHome("~/.agent-dock/thread-routes"),
+      stickyTurns: true,
       respectCliModelFlag: true,
       controls: structuredClone(DEFAULT_ROUTING_CONTROLS),
-      routeOrder: ["quick", "balanced", "deep"],
+      categoryRoutes: { ...DEFAULT_CATEGORY_ROUTES },
+      complexityRoutes: { ...DEFAULT_COMPLEXITY_ROUTES },
+      routeOrder: ["quick", "balanced", "deep", "max"],
     },
     routes: structuredClone(DEFAULT_ROUTES),
     gateway: {
@@ -116,6 +144,18 @@ function gatewayKind(value: unknown, fallback: GatewayKind): GatewayKind {
   return value === "native-codex" || value === "opencodex" ? value : fallback;
 }
 
+function isLoopbackHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "http:" &&
+      ["127.0.0.1", "localhost", "::1", "[::1]"].includes(url.hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function routeProfileValidationError(profile: RouteProfile): string | undefined {
   if (
     !profile.model.trim() ||
@@ -131,13 +171,24 @@ export function routeProfileValidationError(profile: RouteProfile): string | und
 }
 
 function validateConfig(config: RouterConfig): RouterConfig {
-  if (config.version !== CURRENT_CONFIG_VERSION) throw new Error("Run agent-dock migrate-config for the Jev configuration");
-  if (config.classifier.baseUrl !== "https://api.typesafe.ai") throw new Error("classifier.base_url must be https://api.typesafe.ai");
-  if (!config.classifier.model.trim()) throw new Error("classifier.model must be non-empty");
-  if (!config.classifier.apiKeyFile.trim()) throw new Error("classifier.api_key_file must be non-empty");
-  if (!Number.isInteger(config.classifier.timeoutMs) || config.classifier.timeoutMs < 100 || config.classifier.timeoutMs > 30000) throw new Error("invalid classifier timeout");
-  if (!Number.isInteger(config.classifier.maxChars) || config.classifier.maxChars < 256 || config.classifier.maxChars > 32000) throw new Error("invalid classifier max_chars");
-  if (!config.routing.stateDirectory.trim()) throw new Error("routing.state_directory must be non-empty");
+  if (config.version !== 1 && config.version !== CURRENT_CONFIG_VERSION) {
+    throw new Error(`unsupported config version: ${config.version}`);
+  }
+  if (!isLoopbackHttpUrl(config.classifier.baseUrl)) {
+    throw new Error("classifier.base_url must be a loopback HTTP URL");
+  }
+  if (!config.classifier.model.trim()) {
+    throw new Error("classifier.model must be non-empty");
+  }
+  if (!/^[a-f0-9]{64}$/u.test(config.classifier.modelDigest)) {
+    throw new Error("classifier.model_digest must be a SHA-256 digest");
+  }
+  if (!config.classifier.modelDirectory.trim()) {
+    throw new Error("classifier.model_directory must be non-empty");
+  }
+  if (config.classifier.timeoutMs < 100 || config.classifier.timeoutMs > 30_000) {
+    throw new Error("classifier.timeout_ms must be between 100 and 30000");
+  }
   if (config.logging.maxFileBytes < 1024 || config.logging.maxFileBytes > 1024 * 1024 * 1024) {
     throw new Error("logging.max_file_bytes must be between 1024 and 1073741824");
   }
@@ -165,7 +216,16 @@ function validateConfig(config: RouterConfig): RouterConfig {
       `routing.controls.fallback_route references missing route: ${config.routing.controls.fallbackRoute}`,
     );
   }
-  if (Object.keys(config.routes).sort().join() !== "balanced,deep,quick" || config.routing.routeOrder.join() !== "quick,balanced,deep") throw new Error("exactly three routes required: quick, balanced, deep");
+  for (const [category, route] of Object.entries(config.routing.categoryRoutes)) {
+    if (route !== "inherit" && !config.routes[route]) {
+      throw new Error(`category ${category} references missing route: ${route}`);
+    }
+  }
+  for (const [complexity, route] of Object.entries(config.routing.complexityRoutes)) {
+    if (route !== "inherit" && !config.routes[route]) {
+      throw new Error(`complexity ${complexity} references missing route: ${route}`);
+    }
+  }
   if (config.gateway.kind === "opencodex") {
     let url: URL;
     try {
@@ -187,12 +247,28 @@ export function parseConfig(source: string): RouterConfig {
   const defaults = defaultConfig();
   const raw = table(parse(source));
   const classifier = table(raw.classifier);
+  const legacyOllama = table(raw.ollama);
   const routing = table(raw.routing);
   const controls = table(routing.controls);
+  const rawCategoryRoutes = table(routing.category_routes);
+  const rawComplexityRoutes = table(routing.complexity_routes);
   const codex = table(raw.codex);
   const gateway = table(raw.gateway);
   const logging = table(raw.logging);
   const routes = parseRoutes(table(raw.routes), defaults.routes);
+
+  const categoryRoutes = { ...defaults.routing.categoryRoutes };
+  for (const category of SEMANTIC_CATEGORIES) {
+    categoryRoutes[category] = stringValue(rawCategoryRoutes[category], categoryRoutes[category]);
+  }
+
+  const complexityRoutes = { ...defaults.routing.complexityRoutes };
+  for (const complexity of COMPLEXITIES) {
+    complexityRoutes[complexity] = stringValue(
+      rawComplexityRoutes[complexity],
+      complexityRoutes[complexity],
+    );
+  }
 
   const routeOrder = Array.isArray(routing.route_order)
     ? routing.route_order.filter((value): value is string => typeof value === "string")
@@ -202,15 +278,30 @@ export function parseConfig(source: string): RouterConfig {
     version: numberValue(raw.version, defaults.version),
     enabled: booleanValue(raw.enabled, defaults.enabled),
     classifier: {
-      enabled: booleanValue(classifier.enabled, defaults.classifier.enabled),
-      baseUrl: stringValue(classifier.base_url, defaults.classifier.baseUrl).replace(/\/$/, ""),
+      enabled: booleanValue(
+        classifier.enabled,
+        booleanValue(legacyOllama.enabled, defaults.classifier.enabled),
+      ),
+      baseUrl: stringValue(
+        classifier.base_url,
+        stringValue(legacyOllama.base_url, defaults.classifier.baseUrl),
+      ).replace(/\/$/, ""),
       model: stringValue(classifier.model, defaults.classifier.model),
-      apiKeyFile: expandHome(stringValue(classifier.api_key_file, defaults.classifier.apiKeyFile)),
+      modelDigest: stringValue(
+        classifier.model_digest,
+        defaults.classifier.modelDigest,
+      ),
+      modelDirectory: expandHome(
+        stringValue(classifier.model_directory, defaults.classifier.modelDirectory),
+      ),
       timeoutMs: numberValue(classifier.timeout_ms, defaults.classifier.timeoutMs),
-      maxChars: numberValue(classifier.max_chars, defaults.classifier.maxChars),
+      keepAlive: stringValue(
+        classifier.keep_alive,
+        stringValue(legacyOllama.keep_alive, defaults.classifier.keepAlive),
+      ),
     },
     routing: {
-      stateDirectory: expandHome(stringValue(routing.state_directory, defaults.routing.stateDirectory)),
+      stickyTurns: booleanValue(routing.sticky_turns, defaults.routing.stickyTurns),
       respectCliModelFlag: booleanValue(
         routing.respect_cli_model_flag,
         defaults.routing.respectCliModelFlag,
@@ -224,6 +315,8 @@ export function parseConfig(source: string): RouterConfig {
           defaults.routing.controls.fallbackRoute,
         ),
       },
+      categoryRoutes,
+      complexityRoutes,
       routeOrder,
     },
     routes,

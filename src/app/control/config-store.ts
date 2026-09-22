@@ -121,7 +121,7 @@ function statusFromConfig(
     activation: {
       requiresCodexRestart: false,
       message: config.enabled
-        ? "自动路由已启用；档位修改会从下一次请求开始生效。"
+        ? "首轮路由已启用；新对话使用最新档位，已有对话保持首次选择。"
         : "自动路由已暂停；下一次请求开始原样直通 Codex。",
     },
     ...(latestDecision ? { latestDecision } : {}),

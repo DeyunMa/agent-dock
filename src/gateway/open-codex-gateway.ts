@@ -59,12 +59,25 @@ async function configuredOfflineModels(): Promise<string[]> {
   }
 }
 
+export function isOpenCodexRouteUrl(value: string, baseUrl: string): boolean {
+  try {
+    const candidate = new URL(value);
+    const expected = new URL(baseUrl);
+    if (candidate.origin !== expected.origin || candidate.search || candidate.hash) return false;
+    const root = expected.pathname.replace(/\/+$/, "");
+    const path = candidate.pathname.replace(/\/+$/, "");
+    return path === `${root}/v1` || path === `${root}/backend-api/codex`;
+  } catch {
+    return false;
+  }
+}
+
 async function isCodexRouted(baseUrl: string): Promise<boolean> {
   try {
     const source = await readFile(codexConfigPath(), "utf8");
     const match = /^\s*openai_base_url\s*=\s*["']([^"']+)["']/m.exec(source);
     if (!match?.[1]) return false;
-    return normalizedUrl(match[1]) === `${normalizedUrl(baseUrl)}/v1`;
+    return isOpenCodexRouteUrl(match[1], baseUrl);
   } catch {
     return false;
   }

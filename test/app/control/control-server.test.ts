@@ -14,7 +14,7 @@ import type {
 import type { GatewayAdapter, GatewaySnapshot } from "../../../src/gateway/gateway.js";
 import type { GatewayConfig } from "../../../src/router/core/types.js";
 
-const CONFIG = `version = 1
+const CONFIG = `version = 3
 enabled = false
 
 [routes.quick]

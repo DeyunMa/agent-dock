@@ -5,9 +5,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { GatewayConfig } from "../router/core/types.js";
-import { VERSION } from "../version.js";
-import type { GatewayAdapter, GatewayModel, GatewaySnapshot } from "./gateway.js";
-import { parseOpenCodexModels } from "./open-codex-catalog.js";
+import type { GatewayAdapter, GatewaySnapshot } from "./gateway.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -17,46 +15,12 @@ interface OpenCodexHealth {
   version?: unknown;
 }
 
-interface OpenCodexConfigFile {
-  subagentModels?: unknown;
-}
-
-function openCodexHome(): string {
-  return process.env.OPENCODEX_HOME?.trim() || join(homedir(), ".opencodex");
-}
-
 function codexConfigPath(): string {
   return join(process.env.CODEX_HOME?.trim() || join(homedir(), ".codex"), "config.toml");
 }
 
 function normalizedUrl(value: string): string {
   return value.replace(/\/+$/, "");
-}
-
-function uniqueModels(values: unknown[]): string[] {
-  return [...new Set(values.filter((value): value is string => typeof value === "string" && value.trim().length > 0))];
-}
-
-function mergeModelCatalog(primary: GatewayModel[], fallbackIds: string[]): GatewayModel[] {
-  const models = new Map(primary.map((model) => [model.id, model]));
-  const fallback = parseOpenCodexModels({
-    data: fallbackIds.map((id) => ({ id })),
-  });
-  for (const model of fallback) {
-    if (!models.has(model.id)) models.set(model.id, model);
-  }
-  return [...models.values()];
-}
-
-async function configuredOfflineModels(): Promise<string[]> {
-  try {
-    const parsed = JSON.parse(
-      await readFile(join(openCodexHome(), "config.json"), "utf8"),
-    ) as OpenCodexConfigFile;
-    return Array.isArray(parsed.subagentModels) ? uniqueModels(parsed.subagentModels) : [];
-  } catch {
-    return [];
-  }
 }
 
 export function isOpenCodexRouteUrl(value: string, baseUrl: string): boolean {
@@ -94,7 +58,6 @@ async function executable(path: string): Promise<boolean> {
 
 export class LocalOpenCodexGatewayAdapter implements GatewayAdapter {
   private cliPath?: Promise<string | undefined>;
-  private cachedCatalog?: { baseUrl: string; expiresAt: number; values: GatewayModel[] };
 
   constructor(private readonly fetchImpl: typeof fetch = fetch) {}
 
@@ -132,29 +95,6 @@ export class LocalOpenCodexGatewayAdapter implements GatewayAdapter {
     }
   }
 
-  private async liveModelCatalog(baseUrl: string): Promise<GatewayModel[]> {
-    const now = Date.now();
-    if (this.cachedCatalog?.baseUrl === baseUrl && this.cachedCatalog.expiresAt > now) {
-      return this.cachedCatalog.values;
-    }
-
-    for (const query of [`client_version=${encodeURIComponent(VERSION)}`, "ids=cli"]) {
-      try {
-        const response = await this.fetchImpl(`${normalizedUrl(baseUrl)}/v1/models?${query}`, {
-          signal: AbortSignal.timeout(2_500),
-        });
-        if (!response.ok) continue;
-        const values = parseOpenCodexModels(await response.json());
-        if (values.length === 0) continue;
-        this.cachedCatalog = { baseUrl, expiresAt: now + 30_000, values };
-        return values;
-      } catch {
-        // Fall back to the next discovery shape, then to configured model ids.
-      }
-    }
-    return [];
-  }
-
   async snapshot(config: GatewayConfig): Promise<GatewaySnapshot> {
     if (config.kind !== "opencodex") {
       return {
@@ -164,21 +104,15 @@ export class LocalOpenCodexGatewayAdapter implements GatewayAdapter {
         routed: false,
         managed: false,
         baseUrl: config.baseUrl,
-        models: [],
-        modelCatalog: [],
         message: "Codex 正在使用原生连接。",
       };
     }
 
-    const [cli, health, routed, offlineModels] = await Promise.all([
+    const [cli, health, routed] = await Promise.all([
       this.resolveCli(),
       this.health(config.baseUrl),
       isCodexRouted(config.baseUrl),
-      configuredOfflineModels(),
     ]);
-    const liveModels = health ? await this.liveModelCatalog(config.baseUrl) : [];
-    const modelCatalog = mergeModelCatalog(liveModels, offlineModels);
-    const models = modelCatalog.map((model) => model.id);
     const installed = Boolean(cli);
     const running = Boolean(health);
 
@@ -203,8 +137,6 @@ export class LocalOpenCodexGatewayAdapter implements GatewayAdapter {
       managed: config.managed,
       baseUrl: config.baseUrl,
       ...(typeof health?.version === "string" ? { version: health.version } : {}),
-      models,
-      modelCatalog,
       message,
     };
   }

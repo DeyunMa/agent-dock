@@ -80,6 +80,11 @@ export class LocalCodexThreadCatalog implements CodexThreadCatalog {
   private readonly pending = new Map<string, PendingRequest>();
   private readonly cache = new Map<string, CachedThread>();
 
+  async modelList(executable: string, cursor?: string): Promise<unknown> {
+    await this.ensureStarted(executable);
+    return this.requestRaw("model/list", { includeHidden: false, ...(cursor ? { cursor } : {}) }, 5_000);
+  }
+
   async read(threadId: string, executable: string): Promise<CodexThreadSummary | undefined> {
     if (!threadId || threadId === "cli-exec") return undefined;
     const cacheKey = `${executable}\u0000${threadId}`;

@@ -1,17 +1,57 @@
 import Foundation
+import AppKit
 
 @MainActor
 final class ControlServerProcess {
     private let expectedHealthSchema = 2
-    private let minimumControlSchema = 6
+    private let minimumControlSchema = 8
     private var process: Process?
     private var isEnsuring = false
+    private var prepared = false
+    private var setupFailed = false
+
+    private func prepareRuntime() async -> Bool {
+        if prepared { return true }
+        if setupFailed { return false }
+        guard let runtime = Bundle.main.resourceURL?.appending(path: "runtime"),
+              FileManager.default.fileExists(atPath: runtime.appending(path: "setup.mjs").path) else {
+            // swift run is a developer entry point; distributed builds always bundle runtime.
+            prepared = true
+            return true
+        }
+        let result: String? = await Task.detached {
+            let setup = Process()
+            let errors = Pipe()
+            setup.executableURL = runtime.appending(path: "node_modules/node/bin/node")
+            setup.arguments = [runtime.appending(path: "setup.mjs").path]
+            setup.standardOutput = FileHandle.nullDevice
+            setup.standardError = errors
+            do {
+                try setup.run()
+                let data = errors.fileHandleForReading.readDataToEndOfFile()
+                setup.waitUntilExit()
+                return setup.terminationStatus == 0 ? nil : String(data: data, encoding: .utf8) ?? "初始化失败"
+            } catch { return error.localizedDescription }
+        }.value
+        if let result {
+            setupFailed = true
+            let alert = NSAlert()
+            alert.messageText = "Agent Dock 初始化未完成"
+            alert.informativeText = result
+            alert.addButton(withTitle: "知道了")
+            alert.runModal()
+            return false
+        }
+        prepared = true
+        return true
+    }
 
     func ensureRunning() {
         guard !isEnsuring else { return }
         isEnsuring = true
         Task {
             defer { isEnsuring = false }
+            guard await prepareRuntime() else { return }
             if await isHealthy() { return }
 
             let stoppedChild = stopManagedProcess()
@@ -61,7 +101,9 @@ final class ControlServerProcess {
     private func start() -> Bool {
         guard process?.isRunning != true else { return true }
         let home = FileManager.default.homeDirectoryForCurrentUser
-        let executable = home.appending(path: ".local/bin/agent-dock")
+        let bundled = Bundle.main.resourceURL?.appending(path: "runtime/agent-dock")
+        let executable = bundled.flatMap { FileManager.default.isExecutableFile(atPath: $0.path) ? $0 : nil }
+            ?? home.appending(path: ".local/bin/agent-dock")
         guard FileManager.default.isExecutableFile(atPath: executable.path) else { return false }
 
         let child = Process()

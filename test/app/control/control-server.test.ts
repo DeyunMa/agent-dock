@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
 import test from "node:test";
-import { createControlServer } from "../../../src/app/control/server.js";
+import { createControlServer as createServerImpl, type ControlServerOptions } from "../../../src/app/control/server.js";
 import { setRouteProfile, setRouterEnabled } from "../../../src/app/control/config-store.js";
 import type {
   CodexThreadCatalog,
@@ -13,6 +13,15 @@ import type {
 } from "../../../src/app/control/codex-thread-catalog.js";
 import type { GatewayAdapter, GatewaySnapshot } from "../../../src/gateway/gateway.js";
 import type { GatewayConfig } from "../../../src/router/core/types.js";
+
+const fakeModels = [{
+  id: "provider/model", displayName: "Provider Model", provider: "provider",
+  requiresGateway: true, reasoningEfforts: ["high", "xhigh"], serviceTiers: [],
+  capabilitiesKnown: true, defaultReasoningEffort: "high",
+}];
+function createControlServer(options: ControlServerOptions) {
+  return createServerImpl({ modelCatalog: { read: async () => ({ source: "desktop", models: fakeModels, message: "test" }) }, ...options });
+}
 
 const CONFIG = `version = 3
 enabled = false
@@ -168,19 +177,6 @@ class FakeGateway implements GatewayAdapter {
       managed: true,
       baseUrl: config.baseUrl,
       version: "test",
-      models: ["provider/model"],
-      modelCatalog: [
-        {
-          id: "provider/model",
-          displayName: "Provider Model",
-          provider: "provider",
-          requiresGateway: true,
-          reasoningEfforts: ["high", "xhigh"],
-          serviceTiers: [],
-          capabilitiesKnown: true,
-          defaultReasoningEffort: "high",
-        },
-      ],
       message: this.routed ? "routed" : "native",
     };
   }
@@ -193,6 +189,38 @@ class FakeGateway implements GatewayAdapter {
     this.dashboardOpened = true;
   }
 }
+
+test("model refresh reads Codex independently of Gateway and preserves route configuration", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "agent-dock-control-"));
+  const configPath = join(directory, "router.toml");
+  await writeFile(configPath, CONFIG, { mode: 0o600 });
+  const calls: boolean[] = [];
+  const server = createControlServer({
+    host: "127.0.0.1", port: 0, configPath, version: "test", gatewayAdapter: new FakeGateway(),
+    modelCatalog: { async read(_config, refresh) {
+      calls.push(refresh === true);
+      return { source: "desktop", models: [{ ...fakeModels[0]!, id: "gpt-6-sol" }], message: "synced" };
+    } },
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  t.after(() => server.close());
+  const address = server.address();
+  assert(address && typeof address === "object");
+  const base = `http://127.0.0.1:${address.port}`;
+  const response = await fetch(`${base}/v1/models/refresh`, { method: "POST" });
+  assert.equal(response.status, 200);
+  const status = await response.json() as { catalog: { models: { id: string }[] }; gateway: Record<string, unknown> };
+  assert.deepEqual(status.catalog.models.map(m => m.id), ["gpt-6-sol"]);
+  assert.equal(status.gateway.modelCatalog, undefined);
+  assert.deepEqual(calls, [true]);
+  const rejected = await fetch(`${base}/v1/models/refresh`, { method: "POST", headers: { origin: "https://untrusted.example" } });
+  assert.equal(rejected.status, 403);
+  const recursive = await fetch(`${base}/v1/routes/quick`, { method: "PUT", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: "jev-router", effort: "high", fast: false }) });
+  assert.equal(recursive.status, 400);
+  assert.equal(await readFile(configPath, "utf8"), CONFIG);
+});
 
 test("control API exposes the latest visible intent and route", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "agent-dock-control-"));
@@ -236,7 +264,7 @@ test("control API exposes the latest visible intent and route", async (t) => {
     schemaVersion: number;
     latestDecision?: { intent: string; route: string; threadId?: string };
   };
-  assert.equal(status.schemaVersion, 6);
+  assert.equal(status.schemaVersion, 8);
   assert.equal(status.latestDecision?.intent, "do");
   assert.equal(status.latestDecision?.route, "deep");
   assert.equal(status.latestDecision?.threadId, "thread-a");
@@ -448,15 +476,15 @@ test("control API delegates Gateway switching through its Adapter", async (t) =>
   });
   assert.equal(response.status, 200);
   const status = (await response.json()) as {
+    catalog: { models: Array<{ id: string; provider: string; reasoningEfforts: string[] }> };
     gateway: {
       routed: boolean;
-      models: string[];
-      modelCatalog: Array<{ id: string; provider: string; reasoningEfforts: string[] }>;
+
     };
   };
   assert.equal(status.gateway.routed, true);
-  assert.deepEqual(status.gateway.models, ["provider/model"]);
-  assert.deepEqual(status.gateway.modelCatalog[0], {
+  assert.deepEqual(status.catalog.models.map(m => m.id), ["provider/model"]);
+  assert.deepEqual(status.catalog.models[0], {
     id: "provider/model",
     displayName: "Provider Model",
     provider: "provider",

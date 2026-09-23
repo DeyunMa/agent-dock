@@ -2,7 +2,7 @@
 
 ## 仓库定位
 
-- 本仓库实现个人本机使用的 Agent Dock：Codex 透明路由器与原生 macOS 菜单栏控制面。
+- 本仓库实现 macOS 内部试用的 Agent Dock：Codex 透明路由器、原生菜单栏控制面与独立应用包。
 - `docs/ARCHITECTURE.md` 是当前已实现架构的合同；`docs/ROUTING-STRATEGY.md` 在状态明确变更前仅是下一版讨论稿；`README.md` 说明用户入口和本机运行方式。
 
 ## 开始工作前
@@ -24,6 +24,7 @@
 | `src/app/control/` | 本机 Control Interface、原子配置写入与 Module 编排 |
 | `src/app/cli/` | 命令入口与 Router CLI Adapter |
 | `apps/macos/AgentDockBar/` | SwiftUI/AppKit 菜单栏、HUD 和控制面 |
+| `scripts/runtime/`、`scripts/macos/` | 固定版本私有运行时、首启激活、停用和应用打包；不复制本机凭据 |
 | `test/` | 与上述模块对应的合同、并发和回归测试 |
 
 ## 必须保持的不变量

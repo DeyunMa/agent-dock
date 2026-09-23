@@ -79,9 +79,9 @@ AGENT_DOCK_BYPASS=1 codex
 `127.0.0.1:47831` 的 Control API：
 
 - 即时启用或暂停自动路由；Router 进程保持透明直通，不做启停抖动。
-- 编辑每个档位的模型、推理强度和 Fast / priority tier；模型切换时按 OpenCodex catalog 自动收窄到受支持的 effort，并禁用不支持的 Fast。
-- 读取 OpenCodex 模型、provider 与能力清单，并在原生 Codex 与 OpenCodex Gateway 之间显式切换；Gateway 未接管时第三方模型会标记为“已配置，当前不可用”。
-- 通过“配置供应商…”调用 `ocx gui` 打开本机 OpenCodex Dashboard；供应商、账号、密钥和模型发现仍由 OpenCodex 管理。
+- 编辑每个档位的模型、推理强度和 Fast / priority tier；模型切换时按 Codex `model/list` 自动收窄到受支持的 effort，并禁用不支持的 Fast。
+- 模型选择与 Codex 返回的可见目录同步，优先使用运行中桌面的实际列表；没有桌面观察时，通过同一 Codex 程序读取当前配置并标注来源。已配置但不在列表中的档位保留并标记不可用。刷新按钮重新同步，不结束当前会话。
+- 通过“配置供应商…”调用 `ocx gui` 打开本机 OpenCodex Dashboard；第三方供应商、账号和密钥仍由 OpenCodex 管理；Agent Dock 不把它的目录当作 Codex 的完整目录。
 - 让 Control Module 校验并原子替换 TOML；Swift App 不直接解析或改写配置文件。
 - 显示最近一次实际触发的 Codex 会话标题、Desktop/Terminal 来源和本地时间；会话信息按事件里的精确 `threadId` 从 Codex App Server 只读查询，不复制 prompt 或会话正文。
 
@@ -105,11 +105,29 @@ open "$HOME/Applications/Agent Dock.app"
 
 OpenCodex 路由状态同时识别传统 `/v1` 和启用 Codex context relay 后的 `/backend-api/codex` 注入路径；两者都必须与配置的本机 Gateway origin 完全一致。
 
-OpenCodex 的安装、版本、运行和 routed 状态由菜单栏实时检测，不在源码文档中固化本机快照。本地 bundle 使用 ad-hoc 签名；正式分发、自动更新和 notarization 不属于当前底座。
+OpenCodex 的安装、版本、运行和 routed 状态由菜单栏实时检测。1.5.0 内部应用包内置固定版本 OpenCodex；仍采用 ad-hoc 签名，尚无 Developer ID 公证及自动更新。
 
 显式传入 `codex -m ...`、`--oss`、`--local-provider` 或 `--remote` 时，CLI 尊重用户选择并绕过自动路由。
 
 ## 安装与升级
+
+### 1.5.0 内部应用包
+
+1.5.0 标记从本地 embedding 分类迁移到 Jev 远程决策服务。应用包包含 Node 24.20.0、OpenCodex 2.59.0（及其 Bun 运行时）和 Agent Dock 代码。接收者不需要源码、Node、npm、pnpm 或 Swift 工具链，但需要安装 Codex Desktop 并配置自己的模型账号。
+
+1. 解压对应架构的 ZIP，将 `Agent Dock.app` 放入 `/Applications` 或 `~/Applications`，再打开。不要从压缩包临时目录、DMG 或构建目录运行。
+2. 首次启动自动创建配置和指向应用包的命令入口。已有 `router.toml` 原样保留；不会覆盖不属于 Agent Dock 的 CLI。
+3. 在菜单栏打开“Jev 服务设置…”，输入个人 Jev Key，保存后点击“测试连接”。支持替换和删除；保存文件权限 0600、目录 0700。Key 不会从状态接口返回，环境变量密钥只能在原启动环境管理。
+4. 点击“配置供应商…”打开随包 OpenCodex Dashboard，配置账号；通过 Gateway 开关选择接入。生成模型账号与 Jev Key 是独立凭据。
+5. 在合适的工作间隙重启 Codex，然后选择 `Jev Router`。每次登录后先打开 Agent Dock；退出菜单栏不等于停用已激活的代理。
+
+选择自动路由会将首轮文字（默认最多 12,000 字符，超长时保留首尾）与三档模型配置发送到 `api.typesafe.ai`。测试只发固定模拟请求；可能产生少量费用。没有密钥或分类失败时保持直通，不代表自动分类正常。内部使用应遵守组织允许外发的内容范围。
+
+开发机生成分发 ZIP：`rtk proxy pnpm package:macos`。产物位于 `apps/macos/AgentDockBar/.build/releases/`，按本机架构构建，附控制台 SHA-256。包内不带开发者的 Jev Key、供应商账号、配置或对话。OpenCodex 及依赖的原始许可证随 `runtime/node_modules` 保留。
+
+升级时先退出 Agent Dock，替换 App 再打开；保留用户配置。Codex 任务结束后重启以加载新代码。完整停用说明见 [docs/ROLLBACK.md](docs/ROLLBACK.md)。签名、公证和跨机器安装验收仍是扩大分发前的工作。
+
+### 源码开发安装
 
 前置条件为 Node.js 22+、pnpm 和可用 Jev API key。不需要 Ollama 或本地模型。
 

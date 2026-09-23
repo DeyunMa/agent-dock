@@ -1,0 +1,5 @@
+#!/bin/zsh
+set -euo pipefail
+runtime="${0:A:h}"
+export AGENT_DOCK_ENTRYPOINT=codex
+exec "$runtime/agent-dock" "$@"

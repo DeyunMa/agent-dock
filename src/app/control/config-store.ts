@@ -23,16 +23,20 @@ import type {
   CodexThreadSummary,
 } from "./codex-thread-catalog.js";
 import type { GatewayAdapter, GatewaySnapshot } from "../../gateway/gateway.js";
+import type { CodexModelSnapshot } from "../../router/adapters/codex-model-catalog.js";
+import { LocalCodexModelCatalog, type CodexModelCatalog } from "./codex-model-catalog.js";
+import { jevStatus } from "./jev-settings.js";
 
-export const CONTROL_SCHEMA_VERSION = 6;
+export const CONTROL_SCHEMA_VERSION = 8;
 
 export class ControlInputError extends Error {}
 
 export function validateRouteCapabilities(
   profile: RouteProfile,
-  gateway: GatewaySnapshot,
+  catalog: CodexModelSnapshot,
 ): void {
-  const model = gateway.modelCatalog.find((candidate) => candidate.id === profile.model);
+  if (profile.model === "jev-router") throw new ControlInputError("Jev Router cannot route to itself");
+  const model = catalog.models.find((candidate) => candidate.id === profile.model);
   if (!model?.capabilitiesKnown) return;
   if (
     model.reasoningEfforts.length > 0 &&
@@ -48,6 +52,7 @@ export function validateRouteCapabilities(
 }
 
 export interface ControlStatus {
+  jev: { configured: boolean; source: string };
   schemaVersion: number;
   control: {
     status: "running";
@@ -75,6 +80,7 @@ export interface ControlStatus {
   };
   latestDecision?: LatestDecision;
   gateway: GatewaySnapshot;
+  catalog: CodexModelSnapshot;
 }
 
 export interface LatestDecision {
@@ -95,8 +101,12 @@ function statusFromConfig(
   version: string,
   gateway: GatewaySnapshot,
   latestDecision: LatestDecision | undefined,
+  jev: ControlStatus["jev"],
+  catalog: CodexModelSnapshot,
 ): ControlStatus {
   return {
+    catalog,
+    jev,
     schemaVersion: CONTROL_SCHEMA_VERSION,
     control: {
       status: "running",
@@ -135,12 +145,16 @@ export async function readControlStatus(options: {
   version: string;
   gateway: GatewayAdapter;
   threadCatalog?: CodexThreadCatalog;
+  modelCatalog?: CodexModelCatalog;
+  refreshModels?: boolean;
 }): Promise<ControlStatus> {
   const configPath = expandHome(options.configPath ?? configuredConfigPath());
   const config = await loadConfig(configPath);
-  const [gateway, latestDecision] = await Promise.all([
+  const [gateway, latestDecision, jev, catalog] = await Promise.all([
     options.gateway.snapshot(config.gateway),
     readLatestDecision(config, options.threadCatalog),
+    jevStatus(config),
+    (options.modelCatalog ?? new LocalCodexModelCatalog()).read(config, options.refreshModels),
   ]);
   return statusFromConfig(
     config,
@@ -149,6 +163,8 @@ export async function readControlStatus(options: {
     options.version,
     gateway,
     latestDecision,
+    jev,
+    catalog,
   );
 }
 

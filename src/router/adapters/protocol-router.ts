@@ -4,6 +4,7 @@ import { parseModelCatalog } from "../core/model-catalog.js";
 import { extractTurnPrompt } from "../core/prompt.js";
 import type { JsonRpcMessage, RouteDecision, RouteProfile, TurnStartParams } from "../core/types.js";
 import { ROUTER_MODEL, RouterSelections, routerModelEntry, type RouterSelection } from "./router-selection.js";
+import { CodexModelObservation, publishDesktopModels } from "./codex-model-catalog.js";
 
 function idKey(id: unknown): string | undefined {
   return typeof id === "string" || typeof id === "number" ? String(id) : undefined;
@@ -35,12 +36,18 @@ export class ProtocolRouter {
   private readonly existingThreads = new Set<string>();
   private readonly selections: RouterSelections;
   private hasModelCatalog = false;
+  private readonly modelObservation: CodexModelObservation;
 
   constructor(
     private readonly engine: RoutingEngine,
     private readonly options: ProtocolRouterOptions = {},
   ) {
     this.selections = new RouterSelections(engine.config.routing.stateDirectory);
+    this.modelObservation = new CodexModelObservation(async (models) => {
+      if (this.options.surface === "desktop") {
+        await publishDesktopModels(this.engine.config.routing.stateDirectory, models);
+      }
+    });
   }
 
   async transformClientLine(line: string): Promise<string> {
@@ -51,6 +58,7 @@ export class ProtocolRouter {
 
     if (message.method === "model/list") {
       if (key) {
+        this.modelObservation.request(key, raw);
         this.modelListRequestIds.add(key);
         if (!raw?.cursor) this.catalogFirstPages.add(key);
       }
@@ -182,6 +190,7 @@ export class ProtocolRouter {
     if (key) this.configWrites.delete(key);
 
     this.observeServerLine(line);
+    if (key) await this.modelObservation.response(key, message.result).catch(() => undefined);
     if (configWrite && message.error === undefined) await this.remember("default", configWrite);
     if (!message.result || typeof message.result !== "object") return line;
     const result = message.result as Record<string, unknown>;

@@ -16,6 +16,8 @@ import {
 } from "./codex-thread-catalog.js";
 import type { GatewayAdapter } from "../../gateway/gateway.js";
 import { LocalOpenCodexGatewayAdapter } from "../../gateway/open-codex-gateway.js";
+import { LocalCodexModelCatalog, type CodexModelCatalog } from "./codex-model-catalog.js";
+import { deleteJevKey, saveJevKey, testJev } from "./jev-settings.js";
 
 export const DEFAULT_CONTROL_HOST = "127.0.0.1";
 export const DEFAULT_CONTROL_PORT = 47_831;
@@ -27,6 +29,7 @@ export interface ControlServerOptions {
   version: string;
   gatewayAdapter?: GatewayAdapter;
   threadCatalog?: CodexThreadCatalog;
+  modelCatalog?: CodexModelCatalog;
 }
 
 function json(response: ServerResponse, status: number, body: unknown): void {
@@ -65,13 +68,16 @@ export function createControlServer(options: ControlServerOptions): Server {
   const gateway = options.gatewayAdapter ?? new LocalOpenCodexGatewayAdapter();
   const threadCatalog = options.threadCatalog ?? new LocalCodexThreadCatalog();
   const ownsThreadCatalog = options.threadCatalog === undefined;
-  const readStatus = () =>
+  const modelCatalog = options.modelCatalog ?? new LocalCodexModelCatalog();
+  const readStatus = (refreshModels = false) =>
     readControlStatus({
       ...(options.configPath ? { configPath: options.configPath } : {}),
       endpoint: endpoint(options),
       version: options.version,
       gateway,
       threadCatalog,
+      modelCatalog,
+      refreshModels,
     });
 
   const server = createServer(async (request, response) => {
@@ -97,6 +103,31 @@ export function createControlServer(options: ControlServerOptions): Server {
 
       if (request.method === "GET" && url.pathname === "/v1/status") {
         json(response, 200, await readStatus());
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/v1/models/refresh") {
+        json(response, 200, await readStatus(true));
+        return;
+      }
+
+      if (url.pathname === "/v1/jev/key" && ["PUT", "DELETE"].includes(request.method ?? "")) {
+        const config = await loadConfig(options.configPath);
+        try {
+          if (request.method === "DELETE") await deleteJevKey(config.classifier.apiKeyFile);
+          else {
+            const body = await readJsonBody(request) as { key?: unknown } | null;
+            await saveJevKey(config.classifier.apiKeyFile, body?.key);
+          }
+        } catch {
+          json(response, 400, { error: "密钥操作失败。请检查格式、文件权限，或是否设置了 TYPESAFE_API_KEY。" });
+          return;
+        }
+        json(response, 200, await readStatus());
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/v1/jev/test") {
+        json(response, 200, await testJev(await loadConfig(options.configPath)));
         return;
       }
 
@@ -159,10 +190,10 @@ export function createControlServer(options: ControlServerOptions): Server {
           return;
         }
         const config = await loadConfig(options.configPath);
-        const gatewaySnapshot = await gateway.snapshot(config.gateway);
+        const catalog = await modelCatalog.read(config);
         validateRouteCapabilities(
           { model: profile.model, effort: profile.effort, fast: profile.fast },
-          gatewaySnapshot,
+          catalog,
         );
         await setRouteProfile(
           name,
@@ -189,7 +220,7 @@ export function createControlServer(options: ControlServerOptions): Server {
           json(response, 503, { error: (error as Error).message });
           return;
         }
-        json(response, 200, await readStatus());
+        json(response, 200, await readStatus(true));
         return;
       }
 

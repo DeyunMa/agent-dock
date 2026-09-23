@@ -11,6 +11,7 @@ private enum RouteRowMetrics {
 
 struct RouteProfilesSection: View {
     let routes: [RouteSummary]?
+    let catalog: CodexModelCatalogStatus?
     let gateway: GatewayStatus?
     let savingRoute: String?
     let onExpansionChange: (Bool) -> Void
@@ -20,6 +21,12 @@ struct RouteProfilesSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
+            if let catalog {
+                Text(catalog.message)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             columnHeader
 
             if let routes {
@@ -27,7 +34,7 @@ struct RouteProfilesSection: View {
                     ForEach(routes) { route in
                         RouteEditorRow(
                             route: route,
-                            modelChoices: gateway?.availableModels ?? [],
+                            modelChoices: catalog?.models ?? [],
                             gateway: gateway,
                             isSaving: savingRoute == route.name,
                             isExpanded: expansionBinding(for: route.name)
@@ -192,7 +199,7 @@ private struct RouteEditorRow: View {
                 .controlSize(.small)
                 .font(.caption.monospaced())
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .help("从 OpenCodex 模型列表选择")
+                .help("从 Codex 模型列表选择")
             }
 
             modelStatusLine
@@ -312,6 +319,7 @@ private struct RouteEditorRow: View {
     }
 
     private var selectionValid: Bool {
+        guard isAvailable(selectedModel) else { return false }
         guard selectedModel.capabilitiesKnown else { return true }
         let effortValid = selectedModel.reasoningEfforts.isEmpty
             || selectedModel.reasoningEfforts.contains(effort)
@@ -379,18 +387,15 @@ private struct RouteEditorRow: View {
         if gateway?.routed == true && gateway?.running == false {
             return false
         }
-        if model.requiresGateway {
-            return gateway?.routed == true && gateway?.running == true
-        }
-        return true
+        return modelChoices.contains { $0.id == model.id }
     }
 
     private func availabilityWarning(_ model: GatewayModelInfo) -> String? {
         if gateway?.routed == true && gateway?.running == false {
             return "Gateway 离线，当前不可用"
         }
-        if model.requiresGateway && !isAvailable(model) {
-            return "已配置，当前需启用 Gateway"
+        if !isAvailable(model) {
+            return "保留配置；当前 Codex 列表中不可用"
         }
         return nil
     }

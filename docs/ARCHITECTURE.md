@@ -1,6 +1,14 @@
 # Architecture
 
-当前实现版本：`1.4.0`，配置 schema v3。
+当前实现版本：`1.5.0`，配置 schema v3，Control API schema v8。
+
+## 内部应用分发
+
+macOS App 包含私有 Node/OpenCodex/Bun 运行时和 Router，不依赖源码 checkout。版本及安装脚本白名单由 `scripts/runtime/package.json` 固定，依赖树由 package-lock.json 锁定。首次启动运行 setup.mjs，探测 Codex、创建新用户配置、发布应用包命令入口并设置 Desktop 激活变量；已有配置保留，拒绝覆盖无关 CLI。停止应用不会结束已有 Codex 任务。
+
+Control API 的 `PUT /v1/jev/key` 和 `DELETE /v1/jev/key` 管理当前用户的专用权限文件，`POST /v1/jev/test` 发送固定模拟请求。状态仅包含 configured/source，不回传凭据。GUI 显示输入外发范围和测试费用提示；环境变量凭据优先，GUI 不伪装覆盖成功。
+
+停用脚本默认 dry-run；确认执行时先要求退出菜单栏，仅移除已识别的受管入口和旧版 shell 块。保留所有用户数据；重启 Codex 后生效。内部包目前采用 ad-hoc 签名，签名公证与自动更新未实现。
 
 ## 设计原则
 
@@ -62,6 +70,7 @@ Control Module 是配置写入与本机 HTTP 编排入口；Gateway Module 自�
 
 ```text
 GET  /v1/status
+POST /v1/models/refresh
 GET  /v1/decision
 GET  /v1/decisions?after=:cursor&limit=:n
 PUT  /v1/router/enabled
@@ -71,6 +80,16 @@ POST /v1/gateway/dashboard
 ```
 
 供应商、账号、API Key 和 provider-specific 配置属于 OpenCodex。菜单栏只通过 Dashboard seam 调用 `ocx gui`，不读取或复制 Gateway 配置。
+
+## Codex 模型目录
+
+Control schema v8 使用顶层 `catalog`（source/models/updatedAt/message），Gateway 状态不再包含模型目录。Gateway 只负责连通性和生命周期，不能用其 `/v1/models` 或 subagentModels 补全 Codex 列表。
+
+Desktop Adapter 观察成功且完整的 `model/list` 分页响应，只保存可见模型的公开能力字段到 `routing.stateDirectory/model-catalogs/<pid>.json`。隐藏模型与虚拟 `jev-router` 不进入路由候选。保留仍存活桌面进程中最近一次完整列表，不将 CLI 或只读探测结果冒充桌面观察；失败或不完整的刷新不覆盖已有快照。
+
+无存活桌面观察时，Control 用配置中的 desktopBinary 启动独立、只读 metadata App Server，初始化后分页查询 model/list 并关闭；不启动线程或生成请求，结果缓存 30 秒。该结果明确标为当前配置预览，不能保证等于未重载的旧窗口。刷新入口绕过探测缓存，但有桌面观察时仍以实际桌面列表为准，不强制重启 Codex。不读取官方缓存文件拼接目录，不迁移三档或已有会话。未取得目录时显示未知而非伪装同步成功。
+
+切换 Gateway 后，若旧 Codex 进程尚未重载，其实际列表仍可能保持旧值；需要 Codex 自身重新加载后才会发布新的观察。多个桌面实例存在时使用最近返回完整列表的实例，菜单栏不声称识别前台窗口。
 
 ## 生命周期和 fail-open
 

@@ -22,7 +22,30 @@ struct RouterControlClient {
     }
 
     func fetchStatus() async throws -> ControlStatus {
-        try await requestStatus(path: "v1/status", timeout: 2)
+        try await requestStatus(path: "v1/status", timeout: 15)
+    }
+
+    func refreshModels() async throws -> ControlStatus {
+        try await requestStatus(path: "v1/models/refresh", method: "POST", timeout: 15)
+    }
+
+    func saveJevKey(_ key: String) async throws -> ControlStatus {
+        try await requestStatus(path: "v1/jev/key", method: "PUT", body: JSONEncoder().encode(["key": key]))
+    }
+
+    func deleteJevKey() async throws -> ControlStatus {
+        try await requestStatus(path: "v1/jev/key", method: "DELETE")
+    }
+
+    func testJev() async throws -> JevTestResult {
+        var request = URLRequest(url: baseURL.appending(path: "v1/jev/test"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 35
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw RouterControlError.invalidResponse
+        }
+        return try JSONDecoder().decode(JevTestResult.self, from: data)
     }
 
     func fetchDecisions(after cursor: String?) async throws -> DecisionFeedStatus {
@@ -83,7 +106,7 @@ struct RouterControlClient {
         path: String,
         method: String = "GET",
         body: Data? = nil,
-        timeout: TimeInterval = 5
+        timeout: TimeInterval = 15
     ) async throws -> ControlStatus {
         var request = URLRequest(url: baseURL.appending(path: path))
         request.httpMethod = method

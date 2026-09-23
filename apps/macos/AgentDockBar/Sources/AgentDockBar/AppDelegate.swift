@@ -37,7 +37,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         decisionTimer?.tolerance = 0.1
 
-        if ProcessInfo.processInfo.arguments.contains("--show") {
+        let firstLaunch = !UserDefaults.standard.bool(forKey: "hasOpenedAgentDock15")
+        if firstLaunch { UserDefaults.standard.set(true, forKey: "hasOpenedAgentDock15") }
+        if firstLaunch || ProcessInfo.processInfo.arguments.contains("--show") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
                 self?.togglePopover()
             }

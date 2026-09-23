@@ -1,0 +1,6 @@
+#!/bin/zsh
+set -euo pipefail
+runtime="${0:A:h}"
+export OPENCODEX_CLI_PATH="$runtime/ocx"
+export PATH="$runtime/node_modules/node/bin:$PATH"
+exec "$runtime/node_modules/node/bin/node" "$runtime/dist/src/index.js" "$@"

@@ -6,11 +6,16 @@ struct RouterPopoverView: View {
     let onRouteExpansionChange: (Bool) -> Void
 
     @State private var expandedRouteName: String?
+    @State private var showingJev = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
             header
             Divider()
+
+            Button(model.status?.jev.configured == true ? "Jev 服务设置…" : "配置 Jev Key，启用首轮分类…") {
+                showingJev = true
+            }
 
             RouterStatusCard(
                 status: model.status,
@@ -20,6 +25,7 @@ struct RouterPopoverView: View {
 
             RouteProfilesSection(
                 routes: model.status?.routes,
+                catalog: model.status?.catalog,
                 gateway: model.status?.gateway,
                 savingRoute: model.savingRoute,
                 onExpansionChange: onRouteExpansionChange,
@@ -48,6 +54,7 @@ struct RouterPopoverView: View {
         .padding(16)
         .frame(width: 420)
         .task { model.refresh() }
+        .sheet(isPresented: $showingJev) { JevSettingsView(onChange: model.refresh) }
     }
 
     private var header: some View {
@@ -69,11 +76,11 @@ struct RouterPopoverView: View {
 
             Spacer()
 
-            Button(action: model.refresh) {
+            Button(action: model.refreshModels) {
                 Image(systemName: "arrow.clockwise")
             }
             .buttonStyle(.plain)
-            .help("刷新")
+            .help("同步 Codex 模型列表，不重启会话")
         }
     }
 

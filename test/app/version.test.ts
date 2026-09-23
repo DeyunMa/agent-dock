@@ -14,7 +14,7 @@ test("CLI, package and macOS bundle versions stay aligned", async () => {
     ),
     "utf8",
   );
-  assert.equal(VERSION, "1.4.0");
+  assert.equal(VERSION, "1.5.0");
   assert.equal(packageJson.version, VERSION);
   assert.match(
     infoPlist,

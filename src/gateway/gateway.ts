@@ -19,9 +19,6 @@ export interface GatewaySnapshot {
   managed: boolean;
   baseUrl: string;
   version?: string;
-  /** Kept for compatibility with schema v2 menu-bar clients. */
-  models: string[];
-  modelCatalog: GatewayModel[];
   message: string;
 }
 

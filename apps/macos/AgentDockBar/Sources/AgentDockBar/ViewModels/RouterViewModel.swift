@@ -63,14 +63,18 @@ final class RouterViewModel: ObservableObject {
         return abs(date.timeIntervalSinceNow) <= 15
     }
 
-    func refresh() {
+    func refresh() { refreshStatus(models: false) }
+
+    func refreshModels() { refreshStatus(models: true) }
+
+    private func refreshStatus(models: Bool) {
         guard !isRefreshing, activeMutationID == nil else { return }
         isRefreshing = true
         let revision = statusRevision
         Task {
             defer { isRefreshing = false }
             do {
-                let refreshedStatus = try await client.fetchStatus()
+                let refreshedStatus = try await (models ? client.refreshModels() : client.fetchStatus())
                 guard revision == statusRevision, activeMutationID == nil else { return }
                 status = refreshedStatus
                 connection = .online

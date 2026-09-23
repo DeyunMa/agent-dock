@@ -1,0 +1,5 @@
+#!/bin/zsh
+set -euo pipefail
+runtime="${0:A:h}"
+export PATH="$runtime/node_modules/node/bin:$PATH"
+exec "$runtime/node_modules/node/bin/node" "$runtime/node_modules/@bitkyc08/opencodex/bin/ocx.mjs" "$@"

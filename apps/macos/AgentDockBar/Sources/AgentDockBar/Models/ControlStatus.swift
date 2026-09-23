@@ -1,6 +1,7 @@
 import Foundation
 
 struct ControlStatus: Decodable {
+    let jev: JevStatus
     let schemaVersion: Int
     let control: ControlServiceStatus
     let router: RouterStatus
@@ -8,6 +9,18 @@ struct ControlStatus: Decodable {
     let activation: ActivationStatus
     let latestDecision: LatestDecision?
     let gateway: GatewayStatus
+    let catalog: CodexModelCatalogStatus
+}
+
+struct JevStatus: Decodable {
+    let configured: Bool
+    let source: String
+}
+
+struct JevTestResult: Decodable {
+    let ok: Bool
+    let status: String
+    let latencyMs: Int
 }
 
 struct LatestDecision: Decodable, Equatable {
@@ -105,16 +118,14 @@ struct GatewayStatus: Decodable {
     let managed: Bool
     let baseUrl: String
     let version: String?
-    let models: [String]
-    let modelCatalog: [GatewayModelInfo]?
     let message: String
+}
 
-    var availableModels: [GatewayModelInfo] {
-        guard let modelCatalog, !modelCatalog.isEmpty else {
-            return models.map(GatewayModelInfo.fallback)
-        }
-        return modelCatalog
-    }
+struct CodexModelCatalogStatus: Decodable {
+    let source: String
+    let models: [GatewayModelInfo]
+    let updatedAt: String?
+    let message: String
 }
 
 struct GatewayModelInfo: Decodable, Identifiable {

@@ -1,0 +1,13 @@
+{
+  "name": "agent-dock-runtime",
+  "version": "1.5.0",
+  "private": true,
+  "type": "module",
+  "allowScripts": { "node@24.20.0": true, "bun@1.4.0": true },
+  "dependencies": {
+    "@bitkyc08/opencodex": "2.59.0",
+    "node": "24.20.0",
+    "smol-toml": "1.4.2",
+    "ws": "8.18.3"
+  }
+}

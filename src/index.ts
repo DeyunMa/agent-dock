@@ -1,6 +1,7 @@
 import { doctor } from "./app/cli/doctor.js";
 import { runCli } from "./app/cli/run-cli.js";
 import { runControlServerCommand } from "./app/cli/run-control-server.js";
+import { runUserPromptSubmitHook } from "./hooks/user-prompt-submit.js";
 import { publishDecisionEvent } from "./island/decision-feed.js";
 import { defaultConfig } from "./router/core/config.js";
 import { migrateConfigFile } from "./router/core/config-migration.js";
@@ -19,6 +20,7 @@ Usage:
   agent-dock classify [--json] TEXT
   agent-dock migrate-config        Upgrade the local config to the current schema
   agent-dock control-server        Run the loopback control API for the menu bar app
+  agent-dock user-prompt-submit-hook  Provide optional Skill hints to Codex hooks
   agent-dock cli [CODEX_ARGS...]   Run the transparent CLI adapter
   agent-dock app-server ...        Run the Desktop stdio adapter
 
@@ -74,6 +76,9 @@ async function main(): Promise<number> {
   const args = process.argv.slice(2);
   const cliEntrypoint = process.env.AGENT_DOCK_ENTRYPOINT === "codex";
   const appServerInvocation = !cliEntrypoint && args.includes("app-server");
+  if (!cliEntrypoint && args[0] === "user-prompt-submit-hook") {
+    return runUserPromptSubmitHook();
+  }
   if (!cliEntrypoint && args[0] === "migrate-config") {
     const changed = await migrateConfigFile();
     process.stdout.write(

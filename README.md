@@ -42,6 +42,17 @@ Router 不修改原始 prompt，不改变权限、sandbox 或工具配置；Jev 
 8. 只修改 App Server 的 `model / effort / serviceTier` 及 collaboration settings 中对应字段；原始输入、权限、工具和 sandbox 保持不变。
 
 详细设计见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+
+## 可选的 Jev Skill 提示 Hook
+
+`agent-dock user-prompt-submit-hook` 是独立于 Router 的 Codex `UserPromptSubmit` command hook。启用后，它在每次提交用户消息时读取本轮 prompt 和 Codex 本地 Skill 的名称、描述，调用 Jev 独立判断用户是否留下会影响结果的选择，并给 Skill 排序；最多取四个做相关性与关系核对，再通过 `additionalContext` 给 Codex 一条简短提示。Skill 分数不设固定准入阈值，四个是提示长度上限。即使没有合适 Skill，明确未决的选择仍可得到提示。Codex 应依据现有目标和约束判断能否代选；缺少必要偏好时再询问。Hook 不自动加载 Skill、不改原始 prompt、不决定任务完成度，也不改变路由、权限或工具调用。缺密钥、无可用提示、超时或响应无效时静默通过。
+
+候选目录覆盖当前仓库从工作目录到仓库根的 `.agents/skills`、`~/.agents/skills` 和 `/etc/codex/skills`；跳过在 Codex 配置中禁用或标记 `allow_implicit_invocation: false` 的 Skill。插件 Skill 和 Codex 内置 Skill 目前不在扫描范围内，因此提示是补充而非完整目录。超过 128 个本地 Skill 时静默通过，避免只检查不完整的目录。
+
+Hook 复用 `[classifier]` 的 Jev 模型、超时、输入上限和密钥文件。`TYPESAFE_API_KEY` 不会从 Agent Dock 传给 Codex 后端，所以由 Agent Dock 启动的 hook 通常从 owner-only `classifier.api_key_file` 读取密钥；单独启动 Codex 且显式设置该环境变量时仍可使用它。与只发送首轮输入的 Router 不同，启用此 hook 后每次用户提交的 prompt（最多 `[classifier].max_chars`，默认 12,000 字符）及本地 Skill 描述都会发往 `api.typesafe.ai`。程序不记录这些明文。
+
+全局启用当前开发构建：先运行 `pnpm build`，再运行 `node scripts/local/install-user-prompt-hook.mjs --dry-run` 检查范围，最后运行 `node scripts/local/install-user-prompt-hook.mjs`。脚本只向用户级 `~/.codex/hooks.json` 追加一个 `UserPromptSubmit` handler，保留其他 hook，并把旧文件备份到 `~/.codex/backups/`。新 handler 使用当前仓库的构建产物；移动或删除仓库后，需要重新安装 hook。正式 App 包含本功能后，可参照 [resources/hooks/user-prompt-submit.hooks.json](resources/hooks/user-prompt-submit.hooks.json) 把此 handler 的命令替换为 `~/.local/bin/agent-dock`，不要再追加第二个 Agent Dock handler。Codex 可能要求信任审核或重启后才启用新 hook。`additionalContext` 属于附加开发者上下文，会影响 Codex 后续决策，但不会改写用户原始消息。
+
 旧四档讨论稿 [docs/ROUTING-STRATEGY.md](docs/ROUTING-STRATEGY.md) 已被当前三档实现取代。
 回滚方式见 [docs/ROLLBACK.md](docs/ROLLBACK.md)。
 当前结构、三个功能 Module 与 Island 后续演进见 [docs/MODULE-PLAN.md](docs/MODULE-PLAN.md)（Island Core 已落地；M4 实机连接尚未实现）。

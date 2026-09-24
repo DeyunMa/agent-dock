@@ -1,0 +1,18 @@
+{
+  "description": "Agent Dock Jev Skill suggestions for Codex",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.local/bin/agent-dock user-prompt-submit-hook",
+            "timeout": 8,
+            "additionalContextLimit": 1200,
+            "statusMessage": "Checking Skill candidates"
+          }
+        ]
+      }
+    ]
+  }
+}

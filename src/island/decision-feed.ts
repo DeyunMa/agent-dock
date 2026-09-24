@@ -159,3 +159,15 @@ export async function readLatestDecisionEvent(
 ): Promise<DecisionEvent | undefined> {
   return (await readDecisionEvents(config, { limit: 1 })).at(-1);
 }
+
+export async function readRecentDecisionEvents(
+  config: RouterConfig,
+  limit = 5,
+): Promise<DecisionEvent[]> {
+  const path = decisionFeedPath(config);
+  if (!path) return [];
+  return (await loadEvents(path))
+    .filter((event) => event.surface === "desktop" || event.surface === "terminal")
+    .slice(-Math.max(1, Math.min(limit, 5)))
+    .reverse();
+}

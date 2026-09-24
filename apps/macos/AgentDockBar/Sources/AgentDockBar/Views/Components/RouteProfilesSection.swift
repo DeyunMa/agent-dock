@@ -124,12 +124,12 @@ private struct RouteEditorRow: View {
             }
         }
         .background(
-            .quinary.opacity(isExpanded ? 0.82 : 0.58),
+            DockPalette.soft,
             in: RoundedRectangle(cornerRadius: 10)
         )
         .overlay {
             RoundedRectangle(cornerRadius: 10)
-                .stroke(isExpanded ? Color.accentColor.opacity(0.18) : Color.clear, lineWidth: 1)
+                .stroke(isExpanded ? DockPalette.blue.opacity(0.35) : DockPalette.line, lineWidth: 1)
         }
     }
 
@@ -341,7 +341,7 @@ private struct RouteEditorRow: View {
         if route.fast && routeModel.capabilitiesKnown && !routeModel.supportsFast {
             return .orange
         }
-        return route.fast ? .blue : .secondary
+        return route.fast ? DockPalette.blue : .secondary
     }
 
     private var fastHelp: String {
@@ -416,7 +416,7 @@ private struct FastToggle: View {
 
                 ZStack(alignment: isOn ? .trailing : .leading) {
                     Capsule()
-                        .fill(isOn ? Color.accentColor : Color.secondary.opacity(0.22))
+                        .fill(isOn ? DockPalette.blue : DockPalette.line)
                         .frame(width: 34, height: 18)
                         .overlay {
                             Capsule()

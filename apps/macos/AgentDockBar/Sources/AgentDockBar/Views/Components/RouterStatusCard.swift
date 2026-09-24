@@ -4,6 +4,14 @@ struct RouterStatusCard: View {
     let status: ControlStatus?
     let isChanging: Bool
     let onToggle: () -> Void
+    @State private var decisionIndex = 0
+
+    private var recentDecisions: [LatestDecision] { status?.recentDecisions ?? [] }
+    private var displayedDecision: LatestDecision? {
+        recentDecisions.indices.contains(decisionIndex)
+            ? recentDecisions[decisionIndex]
+            : recentDecisions.first
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -15,12 +23,12 @@ struct RouterStatusCard: View {
                         : "pause.circle.fill"
                 )
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(status?.router.enabled == true ? Color.green : Color.secondary)
+                .foregroundStyle(status?.router.enabled == true ? DockPalette.green : DockPalette.muted)
 
                 if let latestDecision = status?.latestDecision {
                     Text("[\(latestDecision.intent)] [\(latestDecision.route)]")
                         .font(.caption.monospaced().weight(.semibold))
-                        .foregroundStyle(.tint)
+                        .foregroundStyle(DockPalette.blue)
                         .accessibilityLabel("最近路由：\(latestDecision.intent)，\(latestDecision.route)")
                 }
 
@@ -35,9 +43,10 @@ struct RouterStatusCard: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if let latestDecision = status?.latestDecision {
-                Divider()
+            Divider()
+            RecentRecordPager(title: "最近路由", count: recentDecisions.count, index: $decisionIndex)
 
+            if let latestDecision = displayedDecision {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "bubble.left.and.text.bubble.right")
                         .font(.caption)
@@ -50,6 +59,10 @@ struct RouterStatusCard: View {
                             .lineLimit(1)
                             .truncationMode(.tail)
 
+                        Text("[\(latestDecision.intent)] [\(latestDecision.route)]")
+                            .font(.caption2.monospaced().weight(.medium))
+                            .foregroundStyle(DockPalette.blue)
+
                         Text(decisionMetadata(latestDecision))
                             .font(.caption2.monospaced())
                             .foregroundStyle(.secondary)
@@ -60,6 +73,10 @@ struct RouterStatusCard: View {
                 }
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("最近触发会话：\(latestDecision.displayTitle)，\(decisionMetadata(latestDecision))")
+            } else {
+                Text("暂无路由记录")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             if let classifier = status?.router.classifier {
@@ -71,7 +88,8 @@ struct RouterStatusCard: View {
             }
         }
         .padding(12)
-        .background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 12))
+        .background(DockPalette.card, in: RoundedRectangle(cornerRadius: 12))
+        .onChange(of: status?.recentDecisions.first?.id) { _, _ in decisionIndex = 0 }
     }
 
     private func decisionMetadata(_ decision: LatestDecision) -> String {

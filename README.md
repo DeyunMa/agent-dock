@@ -47,6 +47,8 @@ Router 不修改原始 prompt，不改变权限、sandbox 或工具配置；Jev 
 
 `agent-dock user-prompt-submit-hook` 是独立于 Router 的 Codex `UserPromptSubmit` command hook。启用后，它在每次提交用户消息时读取本轮 prompt 和 Codex 本地 Skill 的名称、描述，调用 Jev 独立判断用户是否留下会影响结果的选择，并给 Skill 排序；最多取四个做相关性与关系核对，再通过 `additionalContext` 给 Codex 一条简短提示。Skill 分数不设固定准入阈值，四个是提示长度上限。即使没有合适 Skill，明确未决的选择仍可得到提示。Codex 应依据现有目标和约束判断能否代选；缺少必要偏好时再询问。Hook 不自动加载 Skill、不改原始 prompt、不决定任务完成度，也不改变路由、权限或工具调用。缺密钥、无可用提示、超时或响应无效时静默通过。
 
+菜单栏弹窗分为 Router（含模型档位）、Hook、Gateway 三个横向切换的模块，一次只显示当前模块。顶部左右箭头切换，齿轮菜单控制哪些模块参与切换；显示偏好保存在本机，并至少保留一个模块。Router 和 Hook 各显示最近五条记录，可在各自区域翻页。Hook 每次有效提交只在本机保存时间、会话/项目标识、候选 Skill 名称及关系、是否产生提示；包括未产生提示的提交，不保存 prompt、Skill 路径或密钥。它显示的是 Hook 的本地输出摘要，不保证 Codex Desktop 把 hook 结果渲染成聊天消息，也不证明 agent 最终使用了 Skill。Router 的原有事件流仍供 HUD 消费，菜单栏只读取其中最近五条。
+
 候选目录覆盖当前仓库从工作目录到仓库根的 `.agents/skills`、`~/.agents/skills` 和 `/etc/codex/skills`；跳过在 Codex 配置中禁用或标记 `allow_implicit_invocation: false` 的 Skill。插件 Skill 和 Codex 内置 Skill 目前不在扫描范围内，因此提示是补充而非完整目录。超过 128 个本地 Skill 时静默通过，避免只检查不完整的目录。
 
 Hook 复用 `[classifier]` 的 Jev 模型、超时、输入上限和密钥文件。`TYPESAFE_API_KEY` 不会从 Agent Dock 传给 Codex 后端，所以由 Agent Dock 启动的 hook 通常从 owner-only `classifier.api_key_file` 读取密钥；单独启动 Codex 且显式设置该环境变量时仍可使用它。与只发送首轮输入的 Router 不同，启用此 hook 后每次用户提交的 prompt（最多 `[classifier].max_chars`，默认 12,000 字符）及本地 Skill 描述都会发往 `api.typesafe.ai`。程序不记录这些明文。

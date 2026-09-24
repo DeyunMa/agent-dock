@@ -4,7 +4,7 @@ import AppKit
 @MainActor
 final class ControlServerProcess {
     private let expectedHealthSchema = 2
-    private let minimumControlSchema = 8
+    private let minimumControlSchema = 9
     private var process: Process?
     private var isEnsuring = false
     private var prepared = false

@@ -8,6 +8,8 @@ struct ControlStatus: Decodable {
     let routes: [RouteSummary]
     let activation: ActivationStatus
     let latestDecision: LatestDecision?
+    let recentDecisions: [LatestDecision]
+    let recentHookHints: [HookHintStatus]
     let gateway: GatewayStatus
     let catalog: CodexModelCatalogStatus
 }
@@ -53,6 +55,44 @@ struct LatestDecision: Decodable, Equatable {
 struct DecisionFeedStatus: Decodable {
     let schemaVersion: Int
     let decisions: [LatestDecision]
+}
+
+struct HookHintStatus: Decodable, Equatable {
+    let id: String
+    let timestamp: String
+    let threadId: String?
+    let projectName: String?
+    let candidateNames: [String]
+    let hasAlternatives: Bool
+    let hasComplementary: Bool
+    let unresolvedChoice: Bool
+    let contextProduced: Bool
+    let session: CodexThreadSummary?
+
+    var displayTitle: String {
+        if let name = session?.name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+            return name
+        }
+        if let preview = session?.preview?.trimmingCharacters(in: .whitespacesAndNewlines), !preview.isEmpty {
+            return preview
+        }
+        if let threadId, !threadId.isEmpty { return "会话 \(threadId.prefix(8))" }
+        return projectName ?? "Codex"
+    }
+
+    var summary: String {
+        if !contextProduced { return "本轮未补充提示" }
+        if candidateNames.isEmpty { return "已提示核对未决选择" }
+        return "候选 Skill：\(candidateNames.joined(separator: "、"))"
+    }
+
+    var relationshipLabels: [String] {
+        var labels: [String] = []
+        if hasAlternatives { labels.append("可能互斥") }
+        if hasComplementary { labels.append("可互补") }
+        if unresolvedChoice { labels.append("有未决选择") }
+        return labels
+    }
 }
 
 struct CodexThreadSummary: Decodable, Equatable {

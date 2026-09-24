@@ -8,6 +8,7 @@ import {
   publishDecisionEvent,
   readDecisionEvents,
   readLatestDecisionEvent,
+  readRecentDecisionEvents,
 } from "../../src/island/decision-feed.js";
 import { defaultConfig } from "../../src/router/core/config.js";
 import type { RouteDecision } from "../../src/router/core/types.js";
@@ -69,6 +70,20 @@ test("a missing cursor resynchronizes to only the newest event", async () => {
   });
   assert(latest);
   assert.deepEqual(await readDecisionEvents(config, { afterId: "evicted" }), [latest]);
+});
+
+test("menu bar reads only the five newest user-facing router decisions", async () => {
+  const config = await feedConfig();
+  for (let index = 0; index < 6; index += 1) {
+    await publishDecisionEvent(config, "desktop", decision("balanced"), {
+      threadId: `thread-${index}`,
+      triggeredAt: `2026-07-22T08:00:0${index}.000Z`,
+    });
+  }
+  const recent = await readRecentDecisionEvents(config);
+  assert.equal(recent.length, 5);
+  assert.equal(recent[0]?.threadId, "thread-5");
+  assert.equal(recent[4]?.threadId, "thread-1");
 });
 
 test("a late older decision cannot replace or replay after a newer trigger", async () => {

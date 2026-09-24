@@ -2,12 +2,13 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parse } from "smol-toml";
+import { publishHookHint } from "./hint-feed.js";
 import { expandHome, loadConfig } from "../router/core/config.js";
 import { readJevKey } from "../router/core/jev-classifier.js";
 import type { RouterConfig } from "../router/core/types.js";
 
 export type Skill = { name: string; description: string; path: string };
-type HookInput = { prompt?: unknown; cwd?: unknown };
+type HookInput = { prompt?: unknown; cwd?: unknown; session_id?: unknown };
 
 function skillMetadata(source: string): Pick<Skill, "name" | "description"> | undefined {
   const frontmatter = /^---\s*\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u.exec(source)?.[1];
@@ -177,6 +178,10 @@ export async function runUserPromptSubmitHook(fetchImpl: typeof fetch = fetch): 
     const skills = await discoverSkills(input.cwd);
     const context = await skillSuggestionContext(input, config, skills, fetchImpl);
     if (context) process.stdout.write(`${JSON.stringify(hookOutput(context))}\n`);
+    await publishHookHint(config, {
+      cwd: input.cwd,
+      ...(typeof input.session_id === "string" ? { sessionId: input.session_id } : {}),
+    }, context).catch(() => undefined);
   } catch { /* Hook failures must not block the user prompt or leak its contents. */ }
   return 0;
 }

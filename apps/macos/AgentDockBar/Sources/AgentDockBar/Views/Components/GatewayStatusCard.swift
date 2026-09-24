@@ -12,7 +12,7 @@ struct GatewayStatusCard: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
-                        Text("Gateway")
+                        Text("连接状态")
                             .font(.caption.weight(.semibold))
                         Text(badge)
                             .font(.caption2.weight(.medium))
@@ -65,7 +65,7 @@ struct GatewayStatusCard: View {
             }
         }
         .padding(11)
-        .background(.quaternary.opacity(0.42), in: RoundedRectangle(cornerRadius: 12))
+        .background(DockPalette.card, in: RoundedRectangle(cornerRadius: 12))
     }
 
     private var toggleDisabled: Bool {
@@ -88,9 +88,9 @@ struct GatewayStatusCard: View {
 
     private var badgeColor: Color {
         guard let gateway else { return .secondary }
-        if gateway.routed && !gateway.running { return .red }
-        if gateway.routed { return .green }
-        return gateway.running ? .blue : .secondary
+        if gateway.routed && !gateway.running { return DockPalette.red }
+        if gateway.routed { return DockPalette.green }
+        return gateway.running ? DockPalette.blue : .secondary
     }
 
     private var title: String {

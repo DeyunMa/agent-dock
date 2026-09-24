@@ -7,7 +7,7 @@ struct DecisionHUD: View {
         HStack(spacing: 9) {
             Image(systemName: "arrow.triangle.branch")
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.tint)
+                .foregroundStyle(DockPalette.blue)
 
             Text("[\(decision.intent)] [\(decision.route)]")
                 .font(.system(size: 14, weight: .semibold, design: .monospaced))
@@ -19,7 +19,7 @@ struct DecisionHUD: View {
         .background(.ultraThinMaterial, in: Capsule())
         .overlay {
             Capsule()
-                .stroke(Color.accentColor.opacity(0.35), lineWidth: 1)
+                .stroke(DockPalette.blue.opacity(0.35), lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.18), radius: 12, y: 5)
         .frame(width: 240, height: 58)

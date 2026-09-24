@@ -13,6 +13,8 @@ import type {
 } from "../../../src/app/control/codex-thread-catalog.js";
 import type { GatewayAdapter, GatewaySnapshot } from "../../../src/gateway/gateway.js";
 import type { GatewayConfig } from "../../../src/router/core/types.js";
+import { defaultConfig } from "../../../src/router/core/config.js";
+import { publishHookHint } from "../../../src/hooks/hint-feed.js";
 
 const fakeModels = [{
   id: "provider/model", displayName: "Provider Model", provider: "provider",
@@ -264,7 +266,7 @@ test("control API exposes the latest visible intent and route", async (t) => {
     schemaVersion: number;
     latestDecision?: { intent: string; route: string; threadId?: string };
   };
-  assert.equal(status.schemaVersion, 8);
+  assert.equal(status.schemaVersion, 9);
   assert.equal(status.latestDecision?.intent, "do");
   assert.equal(status.latestDecision?.route, "deep");
   assert.equal(status.latestDecision?.threadId, "thread-a");
@@ -320,6 +322,39 @@ test("control decision endpoint exposes surface-tagged display events", async (t
   );
   assert.equal(feed.status, 200);
   assert.deepEqual(await feed.json(), { schemaVersion: 2, decisions: [] });
+});
+
+test("status exposes five hook summaries without a Codex prompt preview", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "agent-dock-hook-status-"));
+  const configPath = join(directory, "router.toml");
+  const auditFile = join(directory, "events.jsonl");
+  await writeFile(
+    configPath,
+    CONFIG.replace('audit_file = "/dev/null"', `audit_file = ${JSON.stringify(auditFile)}`),
+    { mode: 0o600 },
+  );
+  const config = defaultConfig();
+  config.logging.auditFile = auditFile;
+  await publishHookHint(config, { cwd: "/workspace/example", sessionId: "thread-hook" },
+    "Agent Dock Skill 候选：\n- pdf: /private/pdf/SKILL.md\n请核对 Skill 内容");
+  const server = createControlServer({
+    host: "127.0.0.1", port: 0, configPath, version: "test",
+    gatewayAdapter: new FakeGateway(),
+    threadCatalog: new FakeThreadCatalog({
+      "thread-hook": { id: "thread-hook", name: "PDF 任务", preview: "private prompt text", cwd: "/workspace/example" },
+    }),
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  t.after(() => server.close());
+  const address = server.address();
+  assert(address && typeof address === "object");
+  const response = await fetch(`http://127.0.0.1:${address.port}/v1/status`);
+  const body = await response.text();
+  assert.doesNotMatch(body, /private prompt text|\/private\/pdf\/SKILL\.md/);
+  const status = JSON.parse(body) as { recentHookHints: Array<{ candidateNames: string[]; session?: { name?: string } }> };
+  assert.deepEqual(status.recentHookHints[0]?.candidateNames, ["pdf"]);
+  assert.equal(status.recentHookHints[0]?.session?.name, "PDF 任务");
 });
 
 test("status ignores a late stale feed event when a newer turn is audited", async (t) => {

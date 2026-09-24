@@ -3,9 +3,11 @@ import { basename, dirname, join } from "node:path";
 import {
   readDecisionEvents,
   readLatestDecisionEvent,
+  readRecentDecisionEvents,
   type DecisionEvent,
   type DecisionFeedReadOptions,
 } from "../../island/decision-feed.js";
+import { readRecentHookHints, type HookHintEvent } from "../../hooks/hint-feed.js";
 import {
   readLatestAuditDecision,
   type LatestAuditDecision,
@@ -27,7 +29,7 @@ import type { CodexModelSnapshot } from "../../router/adapters/codex-model-catal
 import { LocalCodexModelCatalog, type CodexModelCatalog } from "./codex-model-catalog.js";
 import { jevStatus } from "./jev-settings.js";
 
-export const CONTROL_SCHEMA_VERSION = 8;
+export const CONTROL_SCHEMA_VERSION = 9;
 
 export class ControlInputError extends Error {}
 
@@ -79,6 +81,8 @@ export interface ControlStatus {
     message: string;
   };
   latestDecision?: LatestDecision;
+  recentDecisions: LatestDecision[];
+  recentHookHints: ControlHookHint[];
   gateway: GatewaySnapshot;
   catalog: CodexModelSnapshot;
 }
@@ -94,6 +98,10 @@ export interface LatestDecision {
   session?: CodexThreadSummary;
 }
 
+export interface ControlHookHint extends HookHintEvent {
+  session?: CodexThreadSummary;
+}
+
 function statusFromConfig(
   config: RouterConfig,
   configPath: string,
@@ -101,6 +109,8 @@ function statusFromConfig(
   version: string,
   gateway: GatewaySnapshot,
   latestDecision: LatestDecision | undefined,
+  recentDecisions: LatestDecision[],
+  recentHookHints: ControlHookHint[],
   jev: ControlStatus["jev"],
   catalog: CodexModelSnapshot,
 ): ControlStatus {
@@ -135,6 +145,8 @@ function statusFromConfig(
         : "自动路由已暂停；下一次请求开始原样直通 Codex。",
     },
     ...(latestDecision ? { latestDecision } : {}),
+    recentDecisions,
+    recentHookHints,
     gateway,
   };
 }
@@ -150,11 +162,31 @@ export async function readControlStatus(options: {
 }): Promise<ControlStatus> {
   const configPath = expandHome(options.configPath ?? configuredConfigPath());
   const config = await loadConfig(configPath);
-  const [gateway, latestDecision, jev, catalog] = await Promise.all([
+  const [gateway, latestDecision, decisionEvents, hookHints, jev, catalog] = await Promise.all([
     options.gateway.snapshot(config.gateway),
     readLatestDecision(config, options.threadCatalog),
+    readRecentDecisionEvents(config),
+    readRecentHookHints(config),
     jevStatus(config),
     (options.modelCatalog ?? new LocalCodexModelCatalog()).read(config, options.refreshModels),
+  ]);
+  const [recentDecisions, recentHookHints] = await Promise.all([
+    Promise.all(decisionEvents.map(async (event) => {
+      const decision = eventDecision(event);
+      return (await enrichDecision(config, decision, options.threadCatalog)) ?? decision;
+    })),
+    Promise.all(hookHints.map(async (event): Promise<ControlHookHint> => {
+      if (!event.threadId || !options.threadCatalog) return event;
+      const session = await options.threadCatalog.read(event.threadId, config.codex.desktopBinary);
+      return session ? {
+        ...event,
+        session: {
+          id: session.id,
+          ...(session.name ? { name: session.name } : {}),
+          ...(session.cwd ? { cwd: session.cwd } : {}),
+        },
+      } : event;
+    })),
   ]);
   return statusFromConfig(
     config,
@@ -163,6 +195,8 @@ export async function readControlStatus(options: {
     options.version,
     gateway,
     latestDecision,
+    recentDecisions,
+    recentHookHints,
     jev,
     catalog,
   );

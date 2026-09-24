@@ -15,7 +15,7 @@ struct JevSettingsView: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Jev 路由服务").font(.title2)
             Text(configured ? "密钥已配置" : "首次使用：请配置 Jev API Key")
-                .foregroundStyle(configured ? .green : .secondary)
+                .foregroundStyle(configured ? DockPalette.green : DockPalette.muted)
             Text("选择 Jev Router 后，首次有效输入的文字（超长时截取首尾）和三档模型配置会发送至 Jev，用于选择当前任务的档位。后续固定，除非你明确恢复自动。请只在组织允许发送的内容上使用自动路由。")
                 .font(.callout).fixedSize(horizontal: false, vertical: true)
             SecureField("Jev API Key", text: $key)
@@ -48,6 +48,9 @@ struct JevSettingsView: View {
             }
         }
         .padding(24).frame(width: 510)
+        .background(DockPalette.canvas)
+        .preferredColorScheme(.light)
+        .tint(DockPalette.blue)
         .task { perform {
             let status = try await client.fetchStatus()
             configured = status.jev.configured

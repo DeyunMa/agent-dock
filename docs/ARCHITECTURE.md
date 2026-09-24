@@ -40,7 +40,7 @@ Jev key 从 `TYPESAFE_API_KEY` 或 owner-only `classifier.api_key_file` 读取�
 
 Router 最多发送默认 12,000 字符；长输入保留首尾。原始转发输入不截断。Router 不把之后的用户消息发送 Jev。后续 HUD 的 intent 只能显示显式续话或 unknown，不能伪装为再次分类的结果。
 
-独立的可选 `UserPromptSubmit` Skill 提示 hook 则在每轮提交时使用同一 `[classifier]` Jev 凭据和限额，把当前 prompt 与本地 Skill 名称、描述发给 Jev。未决选择独立于 Skill 分数判断；分数只排序，最多四个候选进入相关性及关系核对。四个是上下文长度和两两核对成本的上限，不代表任务最多能使用四个 Skill。它只通过 Codex hook 的 `additionalContext` 增加提示，不进入 Router 的模型或 intent 决策，不写审计状态，不修改协议输入。Agent Dock 启动的 Codex 子进程不会继承 `TYPESAFE_API_KEY`，所以此 hook 通常依靠 owner-only 凭据文件。Hook 故障静默通过。
+独立的可选 `UserPromptSubmit` Skill 提示 hook 则在每轮提交时使用同一 `[classifier]` Jev 凭据和限额，把当前 prompt 与本地 Skill 名称、描述发给 Jev。未决选择独立于 Skill 分数判断；分数只排序，最多四个候选进入相关性及关系核对。四个是上下文长度和两两核对成本的上限，不代表任务最多能使用四个 Skill。它只通过 Codex hook 的 `additionalContext` 增加提示，不进入 Router 的模型或 intent 决策，不修改协议输入。Hook 另写一条不含 prompt、Skill 路径或凭据的本地展示摘要，最近五条供菜单栏 Hook 区域翻页；无提示的有效提交也记录为无提示。Router 区域只展示原有决策事件流的最近五条，原有有界事件流仍供 HUD 消费。Agent Dock 启动的 Codex 子进程不会继承 `TYPESAFE_API_KEY`，所以此 hook 通常依靠 owner-only 凭据文件。Hook 故障静默通过。
 
 ## 手动控制与热加载
 
